@@ -35,13 +35,51 @@ interface Location {
   is_active: number;
 }
 
+interface OverheadSettings {
+  packaging_per_loaf: number;
+  utilities_per_loaf: number;
+}
+
+interface Ingredient {
+  id: string;
+  name: string;
+  unit: string;
+  package_price: number;
+  package_size: number;
+  package_unit: string;
+  cost_per_unit: number;
+  vendor: string;
+  category: string;
+}
+
 function ConfigPage() {
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState<'slots' | 'flavors' | 'locations'>('slots');
+  const [activeTab, setActiveTab] = useState<'slots' | 'flavors' | 'locations' | 'costs' | 'ingredients'>('slots');
   const [bakeSlots, setBakeSlots] = useState<BakeSlot[]>([]);
   const [flavors, setFlavors] = useState<Flavor[]>([]);
   const [locations, setLocations] = useState<Location[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Overhead/cost settings
+  const [overhead, setOverhead] = useState<OverheadSettings>({ packaging_per_loaf: 0.50, utilities_per_loaf: 0.12 });
+  const [overheadForm, setOverheadForm] = useState<OverheadSettings>({ packaging_per_loaf: 0.50, utilities_per_loaf: 0.12 });
+  const [savingOverhead, setSavingOverhead] = useState(false);
+
+  // Ingredients
+  const [ingredients, setIngredients] = useState<Ingredient[]>([]);
+  const [ingredientFilter, setIngredientFilter] = useState<string>('all');
+  const [ingredientSearch, setIngredientSearch] = useState('');
+  const [showIngredientModal, setShowIngredientModal] = useState(false);
+  const [editingIngredient, setEditingIngredient] = useState<Ingredient | null>(null);
+  const [ingredientForm, setIngredientForm] = useState({
+    name: '',
+    unit: 'g',
+    package_price: 0,
+    package_size: 0,
+    package_unit: '',
+    vendor: '',
+    category: 'base',
+  });
 
   // View mode for bake slots
   const [slotsView, setSlotsView] = useState<'list' | 'calendar'>('list');
@@ -76,18 +114,141 @@ function ConfigPage() {
   async function loadAll() {
     setLoading(true);
     try {
-      const [slotsData, flavorsData, locationsData] = await Promise.all([
+      const [slotsData, flavorsData, locationsData, overheadData, ingredientsData] = await Promise.all([
         window.api.getBakeSlots({}), // Get all slots for calendar view
         window.api.getFlavors(),
         window.api.getLocations(),
+        window.api.getOverhead(),
+        window.api.getIngredients(),
       ]);
       setBakeSlots(slotsData as BakeSlot[]);
       setFlavors(flavorsData as Flavor[]);
       setLocations(locationsData as Location[]);
+      if (overheadData) {
+        setOverhead(overheadData);
+        setOverheadForm(overheadData);
+      }
+      setIngredients(ingredientsData as Ingredient[]);
     } catch (error) {
       console.error('Failed to load config:', error);
     }
     setLoading(false);
+  }
+
+  async function saveOverhead() {
+    setSavingOverhead(true);
+    try {
+      await window.api.updateOverhead({
+        packaging_per_loaf: overheadForm.packaging_per_loaf,
+        utilities_per_loaf: overheadForm.utilities_per_loaf,
+      });
+      setOverhead(overheadForm);
+    } catch (error) {
+      console.error('Failed to save overhead settings:', error);
+    }
+    setSavingOverhead(false);
+  }
+
+  function resetOverheadForm() {
+    setOverheadForm(overhead);
+  }
+
+  const overheadChanged = overhead.packaging_per_loaf !== overheadForm.packaging_per_loaf ||
+    overhead.utilities_per_loaf !== overheadForm.utilities_per_loaf;
+
+  // Ingredient functions
+  function openIngredientModal(ingredient?: Ingredient) {
+    if (ingredient) {
+      setEditingIngredient(ingredient);
+      setIngredientForm({
+        name: ingredient.name,
+        unit: ingredient.unit,
+        package_price: ingredient.package_price,
+        package_size: ingredient.package_size,
+        package_unit: ingredient.package_unit || '',
+        vendor: ingredient.vendor || '',
+        category: ingredient.category || 'base',
+      });
+    } else {
+      setEditingIngredient(null);
+      setIngredientForm({
+        name: '',
+        unit: 'g',
+        package_price: 0,
+        package_size: 0,
+        package_unit: '',
+        vendor: '',
+        category: 'base',
+      });
+    }
+    setShowIngredientModal(true);
+  }
+
+  function closeIngredientModal() {
+    setShowIngredientModal(false);
+    setEditingIngredient(null);
+  }
+
+  async function saveIngredient() {
+    if (!ingredientForm.name.trim() || ingredientForm.package_size <= 0) return;
+
+    try {
+      if (editingIngredient) {
+        await window.api.updateIngredient(editingIngredient.id, {
+          name: ingredientForm.name,
+          unit: ingredientForm.unit,
+          package_price: ingredientForm.package_price,
+          package_size: ingredientForm.package_size,
+          package_unit: ingredientForm.package_unit,
+          vendor: ingredientForm.vendor,
+          category: ingredientForm.category,
+        });
+      } else {
+        await window.api.createIngredient({
+          name: ingredientForm.name,
+          unit: ingredientForm.unit,
+          package_price: ingredientForm.package_price,
+          package_size: ingredientForm.package_size,
+          package_unit: ingredientForm.package_unit,
+          vendor: ingredientForm.vendor,
+          category: ingredientForm.category,
+        });
+      }
+      closeIngredientModal();
+      loadAll();
+    } catch (error) {
+      console.error('Failed to save ingredient:', error);
+    }
+  }
+
+  async function deleteIngredient(ingredient: Ingredient) {
+    if (!confirm(`Delete "${ingredient.name}"? This cannot be undone.`)) return;
+
+    try {
+      await window.api.deleteIngredient(ingredient.id);
+      loadAll();
+    } catch (error) {
+      console.error('Failed to delete ingredient:', error);
+    }
+  }
+
+  // Filter and search ingredients
+  const filteredIngredients = ingredients.filter((ing) => {
+    const matchesFilter = ingredientFilter === 'all' || ing.category === ingredientFilter;
+    const matchesSearch = ing.name.toLowerCase().includes(ingredientSearch.toLowerCase()) ||
+      (ing.vendor && ing.vendor.toLowerCase().includes(ingredientSearch.toLowerCase()));
+    return matchesFilter && matchesSearch;
+  });
+
+  // Format cost per unit for display
+  function formatCostPerUnit(cost: number, unit: string) {
+    if (cost < 0.01) {
+      return `$${(cost * 1000).toFixed(2)}/kg`;
+    } else if (cost < 0.1) {
+      return `$${cost.toFixed(4)}/${unit}`;
+    } else {
+      return `$${cost.toFixed(2)}/${unit}`;
+    }
   }
 
   async function createBakeSlot() {
@@ -309,8 +470,22 @@ function ConfigPage() {
         <button
           className={`btn ${activeTab === 'locations' ? 'btn-primary' : 'btn-secondary'}`}
           onClick={() => setActiveTab('locations')}
+          style={{ marginRight: '8px' }}
         >
           Locations
+        </button>
+        <button
+          className={`btn ${activeTab === 'costs' ? 'btn-primary' : 'btn-secondary'}`}
+          onClick={() => setActiveTab('costs')}
+          style={{ marginRight: '8px' }}
+        >
+          Costs
+        </button>
+        <button
+          className={`btn ${activeTab === 'ingredients' ? 'btn-primary' : 'btn-secondary'}`}
+          onClick={() => setActiveTab('ingredients')}
+        >
+          Ingredients
         </button>
       </div>
 
@@ -594,6 +769,177 @@ function ConfigPage() {
               </table>
             </div>
           )}
+
+          {/* Costs Tab */}
+          {activeTab === 'costs' && (
+            <div className="card">
+              <div className="card-header">
+                <h2 className="card-title">Cost Settings</h2>
+              </div>
+
+              <div style={{ padding: '20px', maxWidth: '400px' }}>
+                <p style={{ marginBottom: '20px', color: '#666', fontSize: '0.9rem' }}>
+                  Set overhead costs that apply to each loaf. These are added to ingredient costs when calculating profit.
+                </p>
+
+                <div className="form-group">
+                  <label className="form-label">Packaging (per loaf)</label>
+                  <div style={{ display: 'flex', alignItems: 'center' }}>
+                    <span style={{ marginRight: '8px', fontSize: '1.1rem' }}>$</span>
+                    <input
+                      type="number"
+                      className="form-input"
+                      value={overheadForm.packaging_per_loaf}
+                      onChange={(e) => setOverheadForm({ ...overheadForm, packaging_per_loaf: parseFloat(e.target.value) || 0 })}
+                      min="0"
+                      step="0.01"
+                      style={{ maxWidth: '120px' }}
+                    />
+                  </div>
+                  <p style={{ fontSize: '0.8rem', color: '#888', marginTop: '4px' }}>
+                    Bags, labels, wrap, liners, etc.
+                  </p>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Utilities (per loaf)</label>
+                  <div style={{ display: 'flex', alignItems: 'center' }}>
+                    <span style={{ marginRight: '8px', fontSize: '1.1rem' }}>$</span>
+                    <input
+                      type="number"
+                      className="form-input"
+                      value={overheadForm.utilities_per_loaf}
+                      onChange={(e) => setOverheadForm({ ...overheadForm, utilities_per_loaf: parseFloat(e.target.value) || 0 })}
+                      min="0"
+                      step="0.01"
+                      style={{ maxWidth: '120px' }}
+                    />
+                  </div>
+                  <p style={{ fontSize: '0.8rem', color: '#888', marginTop: '4px' }}>
+                    Electricity, paper towels, etc.
+                  </p>
+                </div>
+
+                <div style={{ borderTop: '1px solid #e0e0e0', paddingTop: '16px', marginTop: '20px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                    <span style={{ fontWeight: '600' }}>Total Overhead per Loaf</span>
+                    <span style={{ fontSize: '1.2rem', fontWeight: '700', color: '#8B7355' }}>
+                      ${(overheadForm.packaging_per_loaf + overheadForm.utilities_per_loaf).toFixed(2)}
+                    </span>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button
+                      className="btn btn-primary"
+                      onClick={saveOverhead}
+                      disabled={!overheadChanged || savingOverhead}
+                    >
+                      {savingOverhead ? 'Saving...' : 'Save Changes'}
+                    </button>
+                    {overheadChanged && (
+                      <button className="btn btn-secondary" onClick={resetOverheadForm}>
+                        Reset
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Ingredients Tab */}
+          {activeTab === 'ingredients' && (
+            <div className="card">
+              <div className="card-header">
+                <h2 className="card-title">Ingredient Library</h2>
+                <button className="btn btn-primary" onClick={() => openIngredientModal()}>
+                  + Add Ingredient
+                </button>
+              </div>
+
+              {/* Filter and Search */}
+              <div style={{ padding: '16px', borderBottom: '1px solid #e0e0e0', display: 'flex', gap: '16px', flexWrap: 'wrap', alignItems: 'center' }}>
+                <div>
+                  <label style={{ marginRight: '8px', fontSize: '0.9rem' }}>Category:</label>
+                  <select
+                    className="form-select"
+                    value={ingredientFilter}
+                    onChange={(e) => setIngredientFilter(e.target.value)}
+                    style={{ minWidth: '120px' }}
+                  >
+                    <option value="all">All</option>
+                    <option value="base">Base</option>
+                    <option value="sweetener">Sweetener</option>
+                    <option value="spice">Spice</option>
+                    <option value="misc">Misc</option>
+                  </select>
+                </div>
+                <div style={{ flex: 1, minWidth: '200px' }}>
+                  <input
+                    type="text"
+                    className="form-input"
+                    placeholder="Search ingredients..."
+                    value={ingredientSearch}
+                    onChange={(e) => setIngredientSearch(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              {filteredIngredients.length === 0 ? (
+                <div className="empty-state">
+                  <p>No ingredients found. {ingredients.length === 0 ? 'Add one to get started!' : 'Try adjusting your filter.'}</p>
+                </div>
+              ) : (
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>Cost/Unit</th>
+                      <th>Package</th>
+                      <th>Price</th>
+                      <th>Vendor</th>
+                      <th>Category</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredIngredients.map((ing) => (
+                      <tr key={ing.id}>
+                        <td style={{ fontWeight: '500' }}>{ing.name}</td>
+                        <td style={{ fontFamily: 'monospace', fontSize: '0.9rem' }}>
+                          {formatCostPerUnit(ing.cost_per_unit, ing.unit)}
+                        </td>
+                        <td>{ing.package_unit || `${ing.package_size} ${ing.unit}`}</td>
+                        <td>${ing.package_price.toFixed(2)}</td>
+                        <td>{ing.vendor || '-'}</td>
+                        <td style={{ textTransform: 'capitalize' }}>{ing.category}</td>
+                        <td>
+                          <div style={{ display: 'flex', gap: '4px' }}>
+                            <button
+                              className="btn btn-small btn-secondary"
+                              onClick={() => openIngredientModal(ing)}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              className="btn btn-small btn-danger"
+                              onClick={() => deleteIngredient(ing)}
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+
+              <div style={{ padding: '12px 16px', borderTop: '1px solid #e0e0e0', fontSize: '0.85rem', color: '#666' }}>
+                {ingredients.length} ingredient{ingredients.length !== 1 ? 's' : ''} in library
+              </div>
+            </div>
+          )}
         </>
       )}
 
@@ -779,6 +1125,147 @@ function ConfigPage() {
                 disabled={!flavorForm.name.trim() || flavorForm.sizes.some(s => !s.name.trim())}
               >
                 {editingFlavor ? 'Save Changes' : 'Create Flavor'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Ingredient Modal */}
+      {showIngredientModal && (
+        <div className="modal-overlay" onClick={closeIngredientModal}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '500px' }}>
+            <div className="modal-header">
+              <h2 className="modal-title">{editingIngredient ? 'Edit Ingredient' : 'Add Ingredient'}</h2>
+              <button className="modal-close" onClick={closeIngredientModal}>
+                ×
+              </button>
+            </div>
+            <div className="modal-body">
+              <div className="form-group">
+                <label className="form-label">Name *</label>
+                <input
+                  type="text"
+                  className="form-input"
+                  value={ingredientForm.name}
+                  onChange={(e) => setIngredientForm({ ...ingredientForm, name: e.target.value })}
+                  placeholder="e.g., Flour"
+                />
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                <div className="form-group">
+                  <label className="form-label">Category</label>
+                  <select
+                    className="form-select"
+                    value={ingredientForm.category}
+                    onChange={(e) => setIngredientForm({ ...ingredientForm, category: e.target.value })}
+                  >
+                    <option value="base">Base</option>
+                    <option value="sweetener">Sweetener</option>
+                    <option value="spice">Spice</option>
+                    <option value="misc">Misc</option>
+                  </select>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Vendor</label>
+                  <input
+                    type="text"
+                    className="form-input"
+                    value={ingredientForm.vendor}
+                    onChange={(e) => setIngredientForm({ ...ingredientForm, vendor: e.target.value })}
+                    placeholder="e.g., Costco"
+                  />
+                </div>
+              </div>
+
+              <div style={{ borderTop: '1px solid #e0e0e0', paddingTop: '16px', marginTop: '8px' }}>
+                <h4 style={{ marginBottom: '12px', fontSize: '0.95rem' }}>Package Info</h4>
+                <p style={{ fontSize: '0.8rem', color: '#666', marginBottom: '12px' }}>
+                  Enter how much you paid and how much you got. Cost per unit will be calculated automatically.
+                </p>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                  <div className="form-group">
+                    <label className="form-label">Package Price *</label>
+                    <div style={{ display: 'flex', alignItems: 'center' }}>
+                      <span style={{ marginRight: '4px' }}>$</span>
+                      <input
+                        type="number"
+                        className="form-input"
+                        value={ingredientForm.package_price || ''}
+                        onChange={(e) => setIngredientForm({ ...ingredientForm, package_price: parseFloat(e.target.value) || 0 })}
+                        placeholder="18.71"
+                        min="0"
+                        step="0.01"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label">Package Label</label>
+                    <input
+                      type="text"
+                      className="form-input"
+                      value={ingredientForm.package_unit}
+                      onChange={(e) => setIngredientForm({ ...ingredientForm, package_unit: e.target.value })}
+                      placeholder="e.g., 20lb"
+                    />
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                  <div className="form-group">
+                    <label className="form-label">Package Size *</label>
+                    <input
+                      type="number"
+                      className="form-input"
+                      value={ingredientForm.package_size || ''}
+                      onChange={(e) => setIngredientForm({ ...ingredientForm, package_size: parseFloat(e.target.value) || 0 })}
+                      placeholder="9072"
+                      min="0"
+                      step="0.01"
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label">Unit</label>
+                    <select
+                      className="form-select"
+                      value={ingredientForm.unit}
+                      onChange={(e) => setIngredientForm({ ...ingredientForm, unit: e.target.value })}
+                    >
+                      <option value="g">grams (g)</option>
+                      <option value="ml">milliliters (ml)</option>
+                      <option value="tsp">teaspoons (tsp)</option>
+                      <option value="each">each</option>
+                    </select>
+                  </div>
+                </div>
+
+                {ingredientForm.package_size > 0 && ingredientForm.package_price > 0 && (
+                  <div style={{ backgroundColor: '#f5f5f5', padding: '12px', borderRadius: '4px', marginTop: '8px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontWeight: '500' }}>Calculated Cost per Unit:</span>
+                      <span style={{ fontWeight: '700', color: '#8B7355', fontSize: '1.1rem' }}>
+                        {formatCostPerUnit(ingredientForm.package_price / ingredientForm.package_size, ingredientForm.unit)}
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={closeIngredientModal}>
+                Cancel
+              </button>
+              <button
+                className="btn btn-primary"
+                onClick={saveIngredient}
+                disabled={!ingredientForm.name.trim() || ingredientForm.package_size <= 0}
+              >
+                {editingIngredient ? 'Save Changes' : 'Add Ingredient'}
               </button>
             </div>
           </div>

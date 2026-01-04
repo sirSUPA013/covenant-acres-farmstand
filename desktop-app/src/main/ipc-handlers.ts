@@ -427,6 +427,190 @@ export function setupIpcHandlers(): void {
     log('info', 'Recipe deleted', { id });
   });
 
+  // Overhead Settings
+  ipcMain.handle('overhead:get', async () => {
+    const db = getDb();
+    return db.prepare('SELECT * FROM overhead_settings WHERE id = 1').get();
+  });
+
+  ipcMain.handle('overhead:update', async (_event, data) => {
+    const db = getDb();
+    db.prepare(`
+      UPDATE overhead_settings
+      SET packaging_per_loaf = ?, utilities_per_loaf = ?, updated_at = ?
+      WHERE id = 1
+    `).run(data.packagingPerLoaf, data.utilitiesPerLoaf, new Date().toISOString());
+    log('info', 'Overhead settings updated', data);
+  });
+
+  // Ingredients Library
+  ipcMain.handle('ingredients:getAll', async () => {
+    const db = getDb();
+    return db.prepare('SELECT * FROM ingredients ORDER BY category, name').all();
+  });
+
+  ipcMain.handle('ingredients:get', async (_event, id) => {
+    const db = getDb();
+    return db.prepare('SELECT * FROM ingredients WHERE id = ?').get(id);
+  });
+
+  ipcMain.handle('ingredients:create', async (_event, data) => {
+    const db = getDb();
+    const id = `ing-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+    const now = new Date().toISOString();
+    const costPerUnit = data.packagePrice / data.packageSize;
+
+    db.prepare(`
+      INSERT INTO ingredients (id, name, unit, cost_per_unit, package_price, package_size, package_unit, vendor, category, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, data.name, data.unit, costPerUnit, data.packagePrice, data.packageSize, data.packageUnit || null, data.vendor || null, data.category || null, now, now);
+
+    log('info', 'Ingredient created', { id, name: data.name });
+    return { id };
+  });
+
+  ipcMain.handle('ingredients:update', async (_event, id, data) => {
+    const db = getDb();
+    const costPerUnit = data.packagePrice / data.packageSize;
+
+    db.prepare(`
+      UPDATE ingredients
+      SET name = ?, unit = ?, cost_per_unit = ?, package_price = ?, package_size = ?,
+          package_unit = ?, vendor = ?, category = ?, updated_at = ?
+      WHERE id = ?
+    `).run(data.name, data.unit, costPerUnit, data.packagePrice, data.packageSize, data.packageUnit || null, data.vendor || null, data.category || null, new Date().toISOString(), id);
+
+    log('info', 'Ingredient updated', { id, name: data.name });
+  });
+
+  ipcMain.handle('ingredients:delete', async (_event, id) => {
+    const db = getDb();
+    db.prepare('DELETE FROM ingredients WHERE id = ?').run(id);
+    log('info', 'Ingredient deleted', { id });
+  });
+
+  // Profit Analytics
+  ipcMain.handle('analytics:profitByFlavor', async () => {
+    const db = getDb();
+    const overhead = db.prepare('SELECT * FROM overhead_settings WHERE id = 1').get() as { packaging_per_loaf: number; utilities_per_loaf: number } | undefined;
+    const overheadPerLoaf = (overhead?.packaging_per_loaf || 0) + (overhead?.utilities_per_loaf || 0);
+
+    // Get flavors with their prices and costs
+    const flavors = db.prepare(`
+      SELECT f.id, f.name, f.sizes, f.estimated_cost,
+             r.cost_per_loaf as recipe_cost
+      FROM flavors f
+      LEFT JOIN recipes r ON f.recipe_id = r.id
+      WHERE f.is_active = 1
+      ORDER BY f.name
+    `).all() as Array<{
+      id: string;
+      name: string;
+      sizes: string;
+      estimated_cost: number | null;
+      recipe_cost: number | null;
+    }>;
+
+    return flavors.map(f => {
+      const sizes = JSON.parse(f.sizes || '[]') as Array<{ name: string; price: number }>;
+      const price = sizes[0]?.price || 0;
+      const cost = f.estimated_cost || f.recipe_cost || 0;
+      const totalCost = cost + overheadPerLoaf;
+      const profit = price - totalCost;
+      const margin = price > 0 ? (profit / price) * 100 : 0;
+
+      return {
+        id: f.id,
+        name: f.name,
+        price,
+        cost: totalCost,
+        profit,
+        margin,
+      };
+    });
+  });
+
+  ipcMain.handle('analytics:profitByBakeSlot', async (_event, filters) => {
+    const db = getDb();
+    const overhead = db.prepare('SELECT * FROM overhead_settings WHERE id = 1').get() as { packaging_per_loaf: number; utilities_per_loaf: number } | undefined;
+    const overheadPerLoaf = (overhead?.packaging_per_loaf || 0) + (overhead?.utilities_per_loaf || 0);
+
+    // Get flavor costs map
+    const flavorCosts = new Map<string, number>();
+    const flavors = db.prepare('SELECT id, estimated_cost FROM flavors').all() as Array<{ id: string; estimated_cost: number | null }>;
+    flavors.forEach(f => {
+      flavorCosts.set(f.id, (f.estimated_cost || 0) + overheadPerLoaf);
+    });
+
+    // Build query
+    let query = `
+      SELECT b.id, b.date, l.name as location_name,
+             GROUP_CONCAT(o.id) as order_ids,
+             GROUP_CONCAT(o.items) as all_items,
+             SUM(o.total_amount) as revenue
+      FROM bake_slots b
+      LEFT JOIN locations l ON b.location_id = l.id
+      LEFT JOIN orders o ON o.bake_slot_id = b.id AND o.status NOT IN ('canceled', 'no_show') AND o.payment_status = 'paid'
+      WHERE 1=1
+    `;
+    const params: unknown[] = [];
+
+    if (filters?.dateFrom) {
+      query += ' AND b.date >= ?';
+      params.push(filters.dateFrom);
+    }
+    if (filters?.dateTo) {
+      query += ' AND b.date <= ?';
+      params.push(filters.dateTo);
+    }
+
+    query += ' GROUP BY b.id ORDER BY b.date DESC';
+
+    const slots = db.prepare(query).all(...params) as Array<{
+      id: string;
+      date: string;
+      location_name: string;
+      order_ids: string | null;
+      all_items: string | null;
+      revenue: number | null;
+    }>;
+
+    return slots.map(slot => {
+      let totalLoaves = 0;
+      let totalCogs = 0;
+
+      if (slot.all_items) {
+        // Parse all order items and calculate COGS
+        const itemsArrays = slot.all_items.split(',').filter(Boolean);
+        itemsArrays.forEach(itemsJson => {
+          try {
+            const items = JSON.parse(itemsJson) as Array<{ flavorId: string; quantity: number }>;
+            items.forEach(item => {
+              const flavorCost = flavorCosts.get(item.flavorId) || 0;
+              totalLoaves += item.quantity;
+              totalCogs += flavorCost * item.quantity;
+            });
+          } catch {
+            // Skip malformed items
+          }
+        });
+      }
+
+      const revenue = slot.revenue || 0;
+      const profit = revenue - totalCogs;
+
+      return {
+        id: slot.id,
+        date: slot.date,
+        locationName: slot.location_name,
+        loaves: totalLoaves,
+        revenue,
+        cogs: totalCogs,
+        profit,
+      };
+    });
+  });
+
   // Prep Sheet
   ipcMain.handle('prepSheet:generate', async (_event, bakeSlotId) => {
     const db = getDb();

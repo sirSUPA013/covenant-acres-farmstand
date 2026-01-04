@@ -46,6 +46,17 @@ contextBridge.exposeInMainWorld('api', {
   updateRecipe: (id: string, data: object) => ipcRenderer.invoke('recipes:update', id, data),
   deleteRecipe: (id: string) => ipcRenderer.invoke('recipes:delete', id),
 
+  // Overhead Settings
+  getOverhead: () => ipcRenderer.invoke('overhead:get'),
+  updateOverhead: (data: object) => ipcRenderer.invoke('overhead:update', data),
+
+  // Ingredients Library
+  getIngredients: () => ipcRenderer.invoke('ingredients:getAll'),
+  getIngredient: (id: string) => ipcRenderer.invoke('ingredients:get', id),
+  createIngredient: (data: object) => ipcRenderer.invoke('ingredients:create', data),
+  updateIngredient: (id: string, data: object) => ipcRenderer.invoke('ingredients:update', id, data),
+  deleteIngredient: (id: string) => ipcRenderer.invoke('ingredients:delete', id),
+
   // Prep Sheets
   getPrepSheet: (bakeSlotId: string) => ipcRenderer.invoke('prepSheet:generate', bakeSlotId),
   generatePrepSheet: (bakeSlotId: string) => ipcRenderer.invoke('prepSheet:generate', bakeSlotId),
@@ -56,6 +67,8 @@ contextBridge.exposeInMainWorld('api', {
   getSalesStats: (dateRange: object) => ipcRenderer.invoke('analytics:sales', dateRange),
   getFlavorStats: (dateRange: object) => ipcRenderer.invoke('analytics:flavors', dateRange),
   getCustomerStats: () => ipcRenderer.invoke('analytics:customers'),
+  getProfitByFlavor: () => ipcRenderer.invoke('analytics:profitByFlavor'),
+  getProfitByBakeSlot: (filters?: object) => ipcRenderer.invoke('analytics:profitByBakeSlot', filters),
 
   // Notifications
   sendNotification: (type: string, recipientId: string, data: object) =>
@@ -154,6 +167,15 @@ declare global {
       updateRecipe: (id: string, data: object) => Promise<void>;
       deleteRecipe: (id: string) => Promise<void>;
 
+      getOverhead: () => Promise<{ packaging_per_loaf: number; utilities_per_loaf: number }>;
+      updateOverhead: (data: object) => Promise<void>;
+
+      getIngredients: () => Promise<unknown[]>;
+      getIngredient: (id: string) => Promise<unknown>;
+      createIngredient: (data: object) => Promise<{ id: string }>;
+      updateIngredient: (id: string, data: object) => Promise<void>;
+      deleteIngredient: (id: string) => Promise<void>;
+
       getPrepSheet: (bakeSlotId: string) => Promise<unknown>;
       generatePrepSheet: (bakeSlotId: string) => Promise<unknown>;
       printPrepSheet: (bakeSlotId: string) => Promise<void>;
@@ -162,6 +184,8 @@ declare global {
       getSalesStats: (dateRange: object) => Promise<unknown>;
       getFlavorStats: (dateRange: object) => Promise<unknown>;
       getCustomerStats: () => Promise<unknown>;
+      getProfitByFlavor: () => Promise<Array<{ id: string; name: string; price: number; cost: number; profit: number; margin: number }>>;
+      getProfitByBakeSlot: (filters?: object) => Promise<Array<{ id: string; date: string; locationName: string; loaves: number; revenue: number; cogs: number; profit: number }>>;
 
       sendNotification: (type: string, recipientId: string, data: object) => Promise<void>;
       broadcastMessage: (message: string, filters: object) => Promise<void>;

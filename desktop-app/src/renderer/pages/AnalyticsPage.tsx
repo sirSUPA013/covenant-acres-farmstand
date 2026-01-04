@@ -9,6 +9,25 @@ interface SalesSummary {
   ordersByStatus: Record<string, number>;
 }
 
+interface FlavorProfit {
+  id: string;
+  name: string;
+  price: number;
+  cost: number;
+  profit: number;
+  margin: number;
+}
+
+interface BakeSlotProfit {
+  id: string;
+  date: string;
+  locationName: string;
+  loaves: number;
+  revenue: number;
+  cogs: number;
+  profit: number;
+}
+
 interface DateRange {
   label: string;
   startDate: Date;
@@ -19,6 +38,11 @@ function AnalyticsPage() {
   const [summary, setSummary] = useState<SalesSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [dateRange, setDateRange] = useState<string>('30days');
+
+  // Profitability data
+  const [flavorProfits, setFlavorProfits] = useState<FlavorProfit[]>([]);
+  const [bakeSlotProfits, setBakeSlotProfits] = useState<BakeSlotProfit[]>([]);
+  const [activeSection, setActiveSection] = useState<'sales' | 'profit'>('sales');
 
   const dateRanges: Record<string, DateRange> = {
     '7days': {
@@ -56,11 +80,20 @@ function AnalyticsPage() {
     setLoading(true);
     try {
       const range = dateRanges[dateRange];
-      const data = await window.api.getAnalytics({
-        startDate: range.startDate.toISOString(),
-        endDate: range.endDate.toISOString(),
-      });
-      setSummary(data as SalesSummary);
+      const [salesData, flavorProfitData, bakeSlotProfitData] = await Promise.all([
+        window.api.getAnalytics({
+          startDate: range.startDate.toISOString(),
+          endDate: range.endDate.toISOString(),
+        }),
+        window.api.getProfitByFlavor(),
+        window.api.getProfitByBakeSlot({
+          startDate: range.startDate.toISOString(),
+          endDate: range.endDate.toISOString(),
+        }),
+      ]);
+      setSummary(salesData as SalesSummary);
+      setFlavorProfits(flavorProfitData as FlavorProfit[]);
+      setBakeSlotProfits(bakeSlotProfitData as BakeSlotProfit[]);
     } catch (error) {
       console.error('Failed to load analytics:', error);
     }
@@ -91,39 +124,64 @@ function AnalyticsPage() {
       .replace(/\b\w/g, (l) => l.toUpperCase());
   }
 
+  // Calculate profit totals
+  const totalProfit = bakeSlotProfits.reduce((sum, slot) => sum + slot.profit, 0);
+  const totalCogs = bakeSlotProfits.reduce((sum, slot) => sum + slot.cogs, 0);
+  const totalBakeRevenue = bakeSlotProfits.reduce((sum, slot) => sum + slot.revenue, 0);
+  const avgMargin = totalBakeRevenue > 0 ? ((totalProfit / totalBakeRevenue) * 100) : 0;
+
   return (
     <div className="analytics-page">
       <div className="page-header">
         <h1 className="page-title">Analytics</h1>
-        <select
-          className="form-select"
-          value={dateRange}
-          onChange={(e) => setDateRange(e.target.value)}
-          style={{ width: '180px' }}
-        >
-          {Object.entries(dateRanges).map(([key, range]) => (
-            <option key={key} value={key}>
-              {range.label}
-            </option>
-          ))}
-        </select>
+        <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+          <div className="section-tabs" style={{ display: 'flex', border: '1px solid #ddd', borderRadius: '4px', overflow: 'hidden' }}>
+            <button
+              className={`btn btn-small ${activeSection === 'sales' ? 'btn-primary' : 'btn-secondary'}`}
+              onClick={() => setActiveSection('sales')}
+              style={{ borderRadius: 0, border: 'none' }}
+            >
+              Sales
+            </button>
+            <button
+              className={`btn btn-small ${activeSection === 'profit' ? 'btn-primary' : 'btn-secondary'}`}
+              onClick={() => setActiveSection('profit')}
+              style={{ borderRadius: 0, border: 'none' }}
+            >
+              Profitability
+            </button>
+          </div>
+          <select
+            className="form-select"
+            value={dateRange}
+            onChange={(e) => setDateRange(e.target.value)}
+            style={{ width: '180px' }}
+          >
+            {Object.entries(dateRanges).map(([key, range]) => (
+              <option key={key} value={key}>
+                {range.label}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
       {loading ? (
         <div className="card">
           <div className="loading">Loading analytics...</div>
         </div>
-      ) : !summary ? (
-        <div className="card">
-          <div className="empty-state">
-            <div className="empty-icon">📊</div>
-            <p>No data available for this period</p>
+      ) : activeSection === 'sales' ? (
+        !summary ? (
+          <div className="card">
+            <div className="empty-state">
+              <div className="empty-icon">📊</div>
+              <p>No data available for this period</p>
+            </div>
           </div>
-        </div>
-      ) : (
-        <>
-          {/* Summary Cards */}
-          <div className="stats-grid">
+        ) : (
+          <>
+            {/* Summary Cards */}
+            <div className="stats-grid">
             <div className="stat-card">
               <div className="stat-value">{summary.totalOrders}</div>
               <div className="stat-label">Total Orders</div>
@@ -247,12 +305,134 @@ function AnalyticsPage() {
             </div>
           </div>
         </>
+        )
+      ) : (
+        /* Profitability Section */
+        <>
+          {/* Profit Summary Cards */}
+          <div className="stats-grid">
+            <div className="stat-card">
+              <div className="stat-value">{formatCurrency(totalBakeRevenue)}</div>
+              <div className="stat-label">Revenue</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-value">{formatCurrency(totalCogs)}</div>
+              <div className="stat-label">Cost of Goods</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-value" style={{ color: totalProfit >= 0 ? 'var(--primary-green)' : '#c62828' }}>
+                {formatCurrency(totalProfit)}
+              </div>
+              <div className="stat-label">Profit</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-value">{avgMargin.toFixed(1)}%</div>
+              <div className="stat-label">Avg Margin</div>
+            </div>
+          </div>
+
+          <div className="analytics-grid">
+            {/* Profit by Flavor */}
+            <div className="card">
+              <div className="card-header">
+                <h2 className="card-title">Profit by Flavor</h2>
+              </div>
+              {flavorProfits.length === 0 ? (
+                <p className="text-gray" style={{ padding: '16px' }}>No flavor data available</p>
+              ) : (
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Flavor</th>
+                      <th className="text-right">Price</th>
+                      <th className="text-right">Cost</th>
+                      <th className="text-right">Profit</th>
+                      <th className="text-right">Margin</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {flavorProfits
+                      .sort((a, b) => b.margin - a.margin)
+                      .map((flavor) => (
+                        <tr key={flavor.id}>
+                          <td>{flavor.name}</td>
+                          <td className="text-right">{formatCurrency(flavor.price)}</td>
+                          <td className="text-right">{formatCurrency(flavor.cost)}</td>
+                          <td className="text-right" style={{ color: flavor.profit >= 0 ? 'var(--primary-green)' : '#c62828', fontWeight: '600' }}>
+                            {formatCurrency(flavor.profit)}
+                          </td>
+                          <td className="text-right">
+                            <span className="margin-badge" style={{
+                              backgroundColor: flavor.margin >= 80 ? '#e8f5e9' : flavor.margin >= 60 ? '#fff9c4' : '#ffebee',
+                              color: flavor.margin >= 80 ? '#2e7d32' : flavor.margin >= 60 ? '#f57f17' : '#c62828',
+                              padding: '2px 8px',
+                              borderRadius: '12px',
+                              fontWeight: '600',
+                              fontSize: '0.85rem',
+                            }}>
+                              {flavor.margin.toFixed(1)}%
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            {/* Profit by Bake Slot */}
+            <div className="card">
+              <div className="card-header">
+                <h2 className="card-title">Profit by Bake Day</h2>
+              </div>
+              {bakeSlotProfits.length === 0 ? (
+                <p className="text-gray" style={{ padding: '16px' }}>No bake slot data for this period</p>
+              ) : (
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Location</th>
+                      <th className="text-right">Loaves</th>
+                      <th className="text-right">Revenue</th>
+                      <th className="text-right">COGS</th>
+                      <th className="text-right">Profit</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {bakeSlotProfits
+                      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+                      .map((slot) => (
+                        <tr key={slot.id}>
+                          <td>{new Date(slot.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</td>
+                          <td>{slot.locationName}</td>
+                          <td className="text-right">{slot.loaves}</td>
+                          <td className="text-right">{formatCurrency(slot.revenue)}</td>
+                          <td className="text-right">{formatCurrency(slot.cogs)}</td>
+                          <td className="text-right" style={{ color: slot.profit >= 0 ? 'var(--primary-green)' : '#c62828', fontWeight: '600' }}>
+                            {formatCurrency(slot.profit)}
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+
+          <div className="card" style={{ marginTop: '16px', padding: '16px' }}>
+            <p style={{ fontSize: '0.85rem', color: '#666', margin: 0 }}>
+              <strong>Note:</strong> Costs are calculated using the estimated cost per loaf from each flavor's settings.
+              Update flavor costs in Configuration → Flavors to see accurate profit margins.
+            </p>
+          </div>
+        </>
       )}
 
       <style>{`
         .stats-grid {
           display: grid;
-          grid-template-columns: repeat(3, 1fr);
+          grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
           gap: 16px;
           margin-bottom: 24px;
         }

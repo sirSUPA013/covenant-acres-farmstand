@@ -161,6 +161,26 @@ export async function initDatabase(): Promise<void> {
       synced_at TEXT
     );
 
+    -- Overhead Settings (packaging, utilities per loaf)
+    CREATE TABLE IF NOT EXISTS overhead_settings (
+      id INTEGER PRIMARY KEY DEFAULT 1,
+      packaging_per_loaf REAL DEFAULT 0.50,
+      utilities_per_loaf REAL DEFAULT 0.12,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    -- Recipe Ingredients (links recipes to ingredient library)
+    CREATE TABLE IF NOT EXISTS recipe_ingredients (
+      id TEXT PRIMARY KEY,
+      recipe_id TEXT NOT NULL,
+      ingredient_id TEXT NOT NULL,
+      quantity REAL NOT NULL,
+      unit TEXT NOT NULL,
+      phase TEXT DEFAULT 'base',
+      FOREIGN KEY (recipe_id) REFERENCES recipes(id),
+      FOREIGN KEY (ingredient_id) REFERENCES ingredients(id)
+    );
+
     -- Notification Log
     CREATE TABLE IF NOT EXISTS notification_log (
       id TEXT PRIMARY KEY,
@@ -294,6 +314,84 @@ export async function initDatabase(): Promise<void> {
   if (!recipeColumns.some(col => col.name === 'bake_instructions')) {
     db.exec("ALTER TABLE recipes ADD COLUMN bake_instructions TEXT");
     log('info', 'Added bake_instructions column to recipes');
+  }
+
+  // Migrations for ingredients table
+  const ingredientColumns = db.prepare("PRAGMA table_info(ingredients)").all() as Array<{ name: string }>;
+
+  if (!ingredientColumns.some(col => col.name === 'package_price')) {
+    db.exec("ALTER TABLE ingredients ADD COLUMN package_price REAL");
+    log('info', 'Added package_price column to ingredients');
+  }
+
+  if (!ingredientColumns.some(col => col.name === 'package_size')) {
+    db.exec("ALTER TABLE ingredients ADD COLUMN package_size REAL");
+    log('info', 'Added package_size column to ingredients');
+  }
+
+  if (!ingredientColumns.some(col => col.name === 'package_unit')) {
+    db.exec("ALTER TABLE ingredients ADD COLUMN package_unit TEXT");
+    log('info', 'Added package_unit column to ingredients');
+  }
+
+  if (!ingredientColumns.some(col => col.name === 'vendor')) {
+    db.exec("ALTER TABLE ingredients ADD COLUMN vendor TEXT");
+    log('info', 'Added vendor column to ingredients');
+  }
+
+  if (!ingredientColumns.some(col => col.name === 'category')) {
+    db.exec("ALTER TABLE ingredients ADD COLUMN category TEXT");
+    log('info', 'Added category column to ingredients');
+  }
+
+  // Initialize overhead_settings if empty
+  const overheadCount = db.prepare("SELECT COUNT(*) as count FROM overhead_settings").get() as { count: number };
+  if (overheadCount.count === 0) {
+    db.prepare("INSERT INTO overhead_settings (id, packaging_per_loaf, utilities_per_loaf, updated_at) VALUES (1, 0.50, 0.12, ?)").run(new Date().toISOString());
+    log('info', 'Initialized overhead_settings with defaults');
+  }
+
+  // Seed ingredients if empty (from Stephanie's data)
+  const ingredientCount = db.prepare("SELECT COUNT(*) as count FROM ingredients").get() as { count: number };
+  if (ingredientCount.count === 0) {
+    const now = new Date().toISOString();
+    const seedIngredients = [
+      // Base ingredients
+      { name: 'Flour', unit: 'g', package_price: 18.71, package_size: 9072, package_unit: '20lb', vendor: 'Costco', category: 'base' },
+      { name: 'Salt', unit: 'g', package_price: 7.05, package_size: 2116, package_unit: '4.7lb', vendor: 'Costco', category: 'base' },
+      // Sweeteners
+      { name: 'Cane Sugar', unit: 'g', package_price: 12.83, package_size: 4536, package_unit: '10lb', vendor: 'Costco', category: 'sweetener' },
+      { name: 'Brown Sugar', unit: 'g', package_price: 4.11, package_size: 680, package_unit: '24oz', vendor: 'Walmart', category: 'sweetener' },
+      { name: 'Maple Syrup', unit: 'g', package_price: 12.00, package_size: 950, package_unit: '32oz', vendor: 'Costco', category: 'sweetener' },
+      // Spices
+      { name: 'Cinnamon', unit: 'g', package_price: 5.34, package_size: 303, package_unit: '10.7oz', vendor: 'Costco', category: 'spice' },
+      { name: 'Garlic Powder', unit: 'g', package_price: 9.08, package_size: 624, package_unit: '22oz', vendor: 'Costco', category: 'spice' },
+      { name: 'Cocoa Powder', unit: 'g', package_price: 6.61, package_size: 227, package_unit: '8oz', vendor: 'Walmart', category: 'spice' },
+      { name: 'Ginger', unit: 'g', package_price: 4.67, package_size: 45, package_unit: '1.6oz', vendor: 'Walmart', category: 'spice' },
+      // Misc
+      { name: 'Jalapenos (jarred)', unit: 'g', package_price: 2.55, package_size: 340, package_unit: '12oz', vendor: 'Walmart', category: 'misc' },
+      { name: 'Cheddar Cheese', unit: 'g', package_price: 10.87, package_size: 1134, package_unit: '2.5lb', vendor: 'Costco', category: 'misc' },
+      { name: 'Pecans', unit: 'g', package_price: 13.90, package_size: 907, package_unit: '2lb', vendor: 'Costco', category: 'misc' },
+      { name: 'Orange', unit: 'each', package_price: 1.04, package_size: 1, package_unit: '1 each', vendor: 'Walmart', category: 'misc' },
+      { name: 'Orange Juice', unit: 'g', package_price: 4.69, package_size: 1361, package_unit: '46oz', vendor: 'Walmart', category: 'misc' },
+      { name: 'Fresh Cranberries', unit: 'g', package_price: 1.04, package_size: 340, package_unit: '12oz', vendor: 'Walmart', category: 'misc' },
+      { name: 'Butter', unit: 'g', package_price: 14.97, package_size: 907, package_unit: '2lb', vendor: 'Costco', category: 'misc' },
+      { name: 'Vanilla Extract', unit: 'tsp', package_price: 10.68, package_size: 96, package_unit: '16oz', vendor: 'Costco', category: 'misc' },
+      { name: 'Chocolate Morsels', unit: 'g', package_price: 16.04, package_size: 2041, package_unit: '72oz', vendor: 'Costco', category: 'misc' },
+      { name: 'Molasses', unit: 'g', package_price: 8.00, package_size: 680, package_unit: '24oz', vendor: 'Azure', category: 'sweetener' },
+    ];
+
+    const insertStmt = db.prepare(`
+      INSERT INTO ingredients (id, name, unit, cost_per_unit, package_price, package_size, package_unit, vendor, category, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    for (const ing of seedIngredients) {
+      const id = `ing-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+      const costPerUnit = ing.package_price / ing.package_size;
+      insertStmt.run(id, ing.name, ing.unit, costPerUnit, ing.package_price, ing.package_size, ing.package_unit, ing.vendor, ing.category, now, now);
+    }
+    log('info', `Seeded ${seedIngredients.length} ingredients from Stephanie's data`);
   }
 
   // Create blank recipes for flavors that don't have one
