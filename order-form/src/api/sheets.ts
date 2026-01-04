@@ -125,8 +125,10 @@ export const sheetsApi = {
     });
 
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ message: response.statusText }));
-      throw new Error(error.message || 'Failed to submit order');
+      const error = await response.json().catch(() => ({ error: response.statusText, code: 'ORD-001' }));
+      const err = new Error(error.error || 'Failed to submit order');
+      (err as Error & { code?: string }).code = error.code || 'ORD-001';
+      throw err;
     }
 
     return response.json();

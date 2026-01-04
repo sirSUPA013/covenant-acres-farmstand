@@ -360,6 +360,27 @@ body {
   color: var(--primary-green);
 }
 
+.capacity-indicator {
+  text-align: center;
+  padding: var(--spacing-sm) 0;
+  margin-top: var(--spacing-sm);
+  font-size: 0.875rem;
+}
+
+.capacity-text {
+  color: var(--text-gray);
+}
+
+.capacity-text.low {
+  color: var(--warning);
+  font-weight: 600;
+}
+
+.capacity-text.at-limit {
+  color: var(--error);
+  font-weight: 600;
+}
+
 /* Forms */
 .customer-form {
   background: var(--white);

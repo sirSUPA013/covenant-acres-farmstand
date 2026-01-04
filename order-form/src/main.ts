@@ -185,6 +185,15 @@ function renderFlavors(): void {
   updateOrderSummary();
 }
 
+function getTotalLoaves(): number {
+  return Array.from(state.orderItems.values()).reduce((sum, item) => sum + item.quantity, 0);
+}
+
+function getRemainingSpots(): number {
+  if (!state.selectedSlot) return 0;
+  return state.selectedSlot.spotsRemaining - getTotalLoaves();
+}
+
 function updateQuantity(flavorId: string, delta: number): void {
   const flavor = state.availableFlavors.find((f) => f.id === flavorId);
   if (!flavor) return;
@@ -193,6 +202,12 @@ function updateQuantity(flavorId: string, delta: number): void {
   const currentItem = state.orderItems.get(flavorId);
   const currentQty = currentItem?.quantity || 0;
   const newQty = Math.max(0, currentQty + delta);
+
+  // Check capacity when increasing
+  if (delta > 0 && getRemainingSpots() <= 0) {
+    alert(`Only ${state.selectedSlot?.spotsRemaining} loaves available for this date. You've reached the limit.`);
+    return;
+  }
 
   if (newQty === 0) {
     state.orderItems.delete(flavorId);
@@ -227,6 +242,9 @@ function updateOrderSummary(): void {
     return;
   }
 
+  const remaining = getRemainingSpots();
+  const totalLoaves = getTotalLoaves();
+
   itemsContainer.innerHTML = items
     .map(
       (item) => `
@@ -237,6 +255,20 @@ function updateOrderSummary(): void {
     `
     )
     .join('');
+
+  // Add capacity indicator
+  const capacityIndicator = document.getElementById('capacity-indicator');
+  if (capacityIndicator) {
+    const isLow = remaining <= 3 && remaining > 0;
+    const isAtLimit = remaining <= 0;
+    capacityIndicator.innerHTML = `
+      <span class="capacity-text ${isAtLimit ? 'at-limit' : isLow ? 'low' : ''}">
+        ${totalLoaves} of ${state.selectedSlot?.spotsRemaining || 0} loaves
+        ${isAtLimit ? '(limit reached)' : isLow ? '(almost full)' : ''}
+      </span>
+    `;
+    capacityIndicator.style.display = 'block';
+  }
 
   const total = items.reduce((sum, item) => sum + item.totalPrice, 0);
   totalElement.textContent = `$${total.toFixed(2)}`;
@@ -432,10 +464,18 @@ async function submitOrder(): Promise<void> {
     }
   } catch (error) {
     console.error('Order submission failed:', error);
-    showError(
-      'Failed to place your order. Please try again or contact us directly.',
-      'ORD-001'
-    );
+    const err = error as Error & { code?: string };
+    const code = err.code || 'ORD-001';
+
+    // User-friendly messages based on error code
+    const messages: Record<string, string> = {
+      'ORD-106': 'Not enough spots available for this order size. Please reduce quantity or choose a different date.',
+      'ORD-SLOT_CLOSED': 'This pickup date is no longer available. Please select a different date.',
+      'DATA-403': 'Please check your information and try again.',
+    };
+
+    const message = messages[code] || 'Failed to place your order. Please try again or contact us directly.';
+    showError(message, code);
   } finally {
     submitBtn.disabled = false;
     submitBtn.textContent = 'Place Order';
