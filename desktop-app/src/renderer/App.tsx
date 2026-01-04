@@ -56,7 +56,6 @@ function App() {
       <aside className="sidebar">
         <div className="sidebar-header">
           <img src="./assets/logo.jpg" alt="Covenant Acres" className="app-logo" />
-          <p className="app-subtitle">Farmstand</p>
         </div>
 
         <nav className="sidebar-nav">
