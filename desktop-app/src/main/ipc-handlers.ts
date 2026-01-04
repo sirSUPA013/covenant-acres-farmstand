@@ -4,9 +4,38 @@
  */
 
 import { ipcMain, shell, app } from 'electron';
+import crypto from 'crypto';
 import { getDb } from './database';
 import { syncAll, getSyncStatus, signIn, signOut, isAuthenticated, setConfig } from './sheets-sync';
 import { log, createErrorReport, getLogPath } from './logger';
+
+// Simple hash function for PINs
+function hashPin(pin: string): string {
+  return crypto.createHash('sha256').update(pin).digest('hex');
+}
+
+// Current logged-in user (in-memory session)
+let currentUser: { id: string; name: string; isOwner: boolean } | null = null;
+
+export function getCurrentUser() {
+  return currentUser;
+}
+
+export function logAudit(action: string, entityType?: string | null, entityId?: string | null, details?: string) {
+  const db = getDb();
+  db.prepare(`
+    INSERT INTO audit_log (user_id, user_name, action, entity_type, entity_id, details, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    currentUser?.id || null,
+    currentUser?.name || 'System',
+    action,
+    entityType || null,
+    entityId || null,
+    details || null,
+    new Date().toISOString()
+  );
+}
 
 export function setupIpcHandlers(): void {
   // Orders
@@ -59,6 +88,24 @@ export function setupIpcHandlers(): void {
 
     db.prepare(`UPDATE orders SET ${fields}, updated_at = ? WHERE id = ?`).run(...values);
     log('info', 'Order updated', { id, changes: Object.keys(data) });
+  });
+
+  ipcMain.handle('orders:bulkUpdate', async (_event, ids: string[], data) => {
+    const db = getDb();
+    const fields = Object.keys(data)
+      .map((k) => `${k} = ?`)
+      .join(', ');
+    const now = new Date().toISOString();
+
+    const stmt = db.prepare(`UPDATE orders SET ${fields}, updated_at = ? WHERE id = ?`);
+    const updateMany = db.transaction((orderIds: string[]) => {
+      for (const id of orderIds) {
+        stmt.run(...Object.values(data), now, id);
+      }
+    });
+
+    updateMany(ids);
+    log('info', 'Bulk order update', { count: ids.length, changes: Object.keys(data) });
   });
 
   // Customers
@@ -533,6 +580,7 @@ export function setupIpcHandlers(): void {
       business_email: 'businessEmail',
       business_phone: 'businessPhone',
       default_cutoff_hours: 'defaultCutoffHours',
+      require_payment_method: 'requirePaymentMethod',
       notification_email: 'notificationEmail',
       notification_sms: 'notificationSms',
       sms_provider: 'smsProvider',
@@ -545,11 +593,12 @@ export function setupIpcHandlers(): void {
       quiet_hours_end: 'quietHoursEnd',
     };
 
+    const booleanFields = ['notificationEmail', 'notificationSms', 'requirePaymentMethod'];
     const converted: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(settings)) {
       const frontendKey = keyMap[key] || key;
       // Convert 0/1 back to boolean for checkbox fields
-      if (frontendKey === 'notificationEmail' || frontendKey === 'notificationSms') {
+      if (booleanFields.includes(frontendKey)) {
         converted[frontendKey] = value === 1;
       } else {
         converted[frontendKey] = value;
@@ -568,6 +617,7 @@ export function setupIpcHandlers(): void {
       businessEmail: 'business_email',
       businessPhone: 'business_phone',
       defaultCutoffHours: 'default_cutoff_hours',
+      requirePaymentMethod: 'require_payment_method',
       notificationEmail: 'notification_email',
       notificationSms: 'notification_sms',
       smsProvider: 'sms_provider',
@@ -658,6 +708,164 @@ export function setupIpcHandlers(): void {
       log('error', 'Failed to configure Google Sheets', { error });
       return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
     }
+  });
+
+  // Admin Users
+  ipcMain.handle('admin:checkSetup', async () => {
+    const db = getDb();
+    const count = db.prepare('SELECT COUNT(*) as count FROM admin_users').get() as { count: number };
+    return { needsSetup: count.count === 0 };
+  });
+
+  ipcMain.handle('admin:setupOwner', async (_event, name: string, pin: string) => {
+    const db = getDb();
+    const id = `admin-${Date.now().toString(36)}`;
+    const now = new Date().toISOString();
+
+    db.prepare(`
+      INSERT INTO admin_users (id, name, pin_hash, is_active, is_owner, created_at, updated_at)
+      VALUES (?, ?, ?, 1, 1, ?, ?)
+    `).run(id, name, hashPin(pin), now, now);
+
+    currentUser = { id, name, isOwner: true };
+    logAudit('OWNER_SETUP', 'admin_users', id, `Owner account created: ${name}`);
+    log('info', 'Owner account created', { id, name });
+
+    return { success: true, user: currentUser };
+  });
+
+  ipcMain.handle('admin:login', async (_event, pin: string) => {
+    const db = getDb();
+    const pinHash = hashPin(pin);
+
+    const user = db.prepare(`
+      SELECT id, name, is_owner FROM admin_users
+      WHERE pin_hash = ? AND is_active = 1
+    `).get(pinHash) as { id: string; name: string; is_owner: number } | undefined;
+
+    if (!user) {
+      logAudit('LOGIN_FAILED', 'admin_users', null, 'Invalid PIN attempt');
+      return { success: false, error: 'Invalid PIN' };
+    }
+
+    // Update last login
+    db.prepare('UPDATE admin_users SET last_login = ? WHERE id = ?')
+      .run(new Date().toISOString(), user.id);
+
+    currentUser = { id: user.id, name: user.name, isOwner: user.is_owner === 1 };
+    logAudit('LOGIN', 'admin_users', user.id, `User logged in: ${user.name}`);
+    log('info', 'Admin login', { id: user.id, name: user.name });
+
+    return { success: true, user: currentUser };
+  });
+
+  ipcMain.handle('admin:logout', async () => {
+    if (currentUser) {
+      logAudit('LOGOUT', 'admin_users', currentUser.id, `User logged out: ${currentUser.name}`);
+    }
+    currentUser = null;
+    return { success: true };
+  });
+
+  ipcMain.handle('admin:getCurrentUser', async () => {
+    return currentUser;
+  });
+
+  ipcMain.handle('admin:getUsers', async () => {
+    const db = getDb();
+    return db.prepare(`
+      SELECT id, name, is_active, is_owner, last_login, created_at
+      FROM admin_users ORDER BY is_owner DESC, name
+    `).all();
+  });
+
+  ipcMain.handle('admin:createUser', async (_event, name: string, pin: string) => {
+    if (!currentUser?.isOwner) {
+      return { success: false, error: 'Only owners can create users' };
+    }
+
+    const db = getDb();
+    const id = `admin-${Date.now().toString(36)}`;
+    const now = new Date().toISOString();
+
+    db.prepare(`
+      INSERT INTO admin_users (id, name, pin_hash, is_active, is_owner, created_at, updated_at)
+      VALUES (?, ?, ?, 1, 0, ?, ?)
+    `).run(id, name, hashPin(pin), now, now);
+
+    logAudit('USER_CREATED', 'admin_users', id, `Admin user created: ${name}`);
+    log('info', 'Admin user created', { id, name });
+
+    return { success: true, id };
+  });
+
+  ipcMain.handle('admin:updateUser', async (_event, id: string, data: { name?: string; pin?: string; isActive?: boolean }) => {
+    if (!currentUser?.isOwner && currentUser?.id !== id) {
+      return { success: false, error: 'Permission denied' };
+    }
+
+    const db = getDb();
+    const updates: string[] = [];
+    const values: unknown[] = [];
+
+    if (data.name) {
+      updates.push('name = ?');
+      values.push(data.name);
+    }
+    if (data.pin) {
+      updates.push('pin_hash = ?');
+      values.push(hashPin(data.pin));
+    }
+    if (typeof data.isActive === 'boolean') {
+      updates.push('is_active = ?');
+      values.push(data.isActive ? 1 : 0);
+    }
+
+    if (updates.length === 0) return { success: true };
+
+    updates.push('updated_at = ?');
+    values.push(new Date().toISOString());
+    values.push(id);
+
+    db.prepare(`UPDATE admin_users SET ${updates.join(', ')} WHERE id = ?`).run(...values);
+
+    logAudit('USER_UPDATED', 'admin_users', id, `Admin user updated: ${JSON.stringify(Object.keys(data))}`);
+    log('info', 'Admin user updated', { id });
+
+    return { success: true };
+  });
+
+  ipcMain.handle('admin:deleteUser', async (_event, id: string) => {
+    if (!currentUser?.isOwner) {
+      return { success: false, error: 'Only owners can delete users' };
+    }
+
+    const db = getDb();
+
+    // Can't delete yourself or other owners
+    const user = db.prepare('SELECT is_owner FROM admin_users WHERE id = ?').get(id) as { is_owner: number } | undefined;
+    if (!user) return { success: false, error: 'User not found' };
+    if (user.is_owner) return { success: false, error: 'Cannot delete owner accounts' };
+
+    db.prepare('DELETE FROM admin_users WHERE id = ?').run(id);
+
+    logAudit('USER_DELETED', 'admin_users', id, 'Admin user deleted');
+    log('info', 'Admin user deleted', { id });
+
+    return { success: true };
+  });
+
+  // Audit Log
+  ipcMain.handle('audit:getLog', async (_event, filters?: { limit?: number; offset?: number }) => {
+    const db = getDb();
+    const limit = filters?.limit || 100;
+    const offset = filters?.offset || 0;
+
+    return db.prepare(`
+      SELECT * FROM audit_log
+      ORDER BY created_at DESC
+      LIMIT ? OFFSET ?
+    `).all(limit, offset);
   });
 
   // System

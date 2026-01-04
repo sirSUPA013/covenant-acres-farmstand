@@ -1,6 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { Routes, Route, NavLink, useLocation } from 'react-router-dom';
 
+// Components
+import LockScreen from './components/LockScreen';
+
 // Pages
 import OrdersPage from './pages/OrdersPage';
 import CustomersPage from './pages/CustomersPage';
@@ -17,7 +20,15 @@ interface SyncStatus {
   isSyncing: boolean;
 }
 
+interface AdminUser {
+  id: string;
+  name: string;
+  isOwner: boolean;
+}
+
 function App() {
+  const [isLocked, setIsLocked] = useState(true);
+  const [currentUser, setCurrentUser] = useState<AdminUser | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>({
     isOnline: true,
     lastSync: null,
@@ -40,6 +51,21 @@ function App() {
 
     return unsubscribe;
   }, []);
+
+  function handleUnlock(user: AdminUser) {
+    setCurrentUser(user);
+    setIsLocked(false);
+  }
+
+  async function handleLogout() {
+    await window.api.adminLogout();
+    setCurrentUser(null);
+    setIsLocked(true);
+  }
+
+  if (isLocked) {
+    return <LockScreen onUnlock={handleUnlock} />;
+  }
 
   const navItems = [
     { path: '/', label: 'Orders', icon: '📋' },
@@ -72,6 +98,21 @@ function App() {
         </nav>
 
         <div className="sidebar-footer">
+          {currentUser && (
+            <div className="user-badge">
+              <div className="user-avatar">
+                {currentUser.name.charAt(0).toUpperCase()}
+              </div>
+              <div className="user-info">
+                <div className="user-name">{currentUser.name}</div>
+                <div className="user-role">{currentUser.isOwner ? 'Owner' : 'Admin'}</div>
+              </div>
+              <button className="logout-btn" onClick={handleLogout} title="Lock">
+                🔒
+              </button>
+            </div>
+          )}
+
           <NavLink to="/settings" className="nav-item settings-link">
             <span className="nav-icon">⚙️</span>
             <span className="nav-label">Settings</span>

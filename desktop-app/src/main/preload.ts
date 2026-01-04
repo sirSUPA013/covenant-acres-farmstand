@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('api', {
   getOrders: (filters?: object) => ipcRenderer.invoke('orders:getAll', filters),
   getOrder: (id: string) => ipcRenderer.invoke('orders:get', id),
   updateOrder: (id: string, data: object) => ipcRenderer.invoke('orders:update', id, data),
+  bulkUpdateOrders: (ids: string[], data: object) => ipcRenderer.invoke('orders:bulkUpdate', ids, data),
   deleteOrder: (id: string) => ipcRenderer.invoke('orders:delete', id),
 
   // Customers
@@ -74,12 +75,26 @@ contextBridge.exposeInMainWorld('api', {
   getConfig: () => ipcRenderer.invoke('config:get'),
   updateConfig: (data: object) => ipcRenderer.invoke('config:update', data),
 
-  // Auth
+  // Auth (Google Sheets)
   signIn: () => ipcRenderer.invoke('auth:signIn'),
   signOut: () => ipcRenderer.invoke('auth:signOut'),
   getAuthStatus: () => ipcRenderer.invoke('auth:status'),
   configureGoogleSheets: (credentials: object, spreadsheetId: string) =>
     ipcRenderer.invoke('auth:configure', credentials, spreadsheetId),
+
+  // Admin Auth
+  checkAdminSetup: () => ipcRenderer.invoke('admin:checkSetup'),
+  setupOwner: (name: string, pin: string) => ipcRenderer.invoke('admin:setupOwner', name, pin),
+  adminLogin: (pin: string) => ipcRenderer.invoke('admin:login', pin),
+  adminLogout: () => ipcRenderer.invoke('admin:logout'),
+  getCurrentUser: () => ipcRenderer.invoke('admin:getCurrentUser'),
+  getAdminUsers: () => ipcRenderer.invoke('admin:getUsers'),
+  createAdminUser: (name: string, pin: string) => ipcRenderer.invoke('admin:createUser', name, pin),
+  updateAdminUser: (id: string, data: object) => ipcRenderer.invoke('admin:updateUser', id, data),
+  deleteAdminUser: (id: string) => ipcRenderer.invoke('admin:deleteUser', id),
+
+  // Audit Log
+  getAuditLog: (filters?: object) => ipcRenderer.invoke('audit:getLog', filters),
 
   // System
   sendErrorReport: () => ipcRenderer.invoke('system:sendErrorReport'),
@@ -107,6 +122,7 @@ declare global {
       getOrders: (filters?: object) => Promise<unknown[]>;
       getOrder: (id: string) => Promise<unknown>;
       updateOrder: (id: string, data: object) => Promise<void>;
+      bulkUpdateOrders: (ids: string[], data: object) => Promise<void>;
       deleteOrder: (id: string) => Promise<void>;
 
       getCustomers: (filters?: object) => Promise<unknown[]>;
@@ -161,6 +177,18 @@ declare global {
       signOut: () => Promise<void>;
       getAuthStatus: () => Promise<{ isSignedIn: boolean; email?: string }>;
       configureGoogleSheets: (credentials: object, spreadsheetId: string) => Promise<{ success: boolean; error?: string }>;
+
+      checkAdminSetup: () => Promise<{ needsSetup: boolean }>;
+      setupOwner: (name: string, pin: string) => Promise<{ success: boolean; user?: object }>;
+      adminLogin: (pin: string) => Promise<{ success: boolean; user?: object; error?: string }>;
+      adminLogout: () => Promise<{ success: boolean }>;
+      getCurrentUser: () => Promise<{ id: string; name: string; isOwner: boolean } | null>;
+      getAdminUsers: () => Promise<unknown[]>;
+      createAdminUser: (name: string, pin: string) => Promise<{ success: boolean; id?: string; error?: string }>;
+      updateAdminUser: (id: string, data: object) => Promise<{ success: boolean; error?: string }>;
+      deleteAdminUser: (id: string) => Promise<{ success: boolean; error?: string }>;
+
+      getAuditLog: (filters?: object) => Promise<unknown[]>;
 
       sendErrorReport: () => Promise<void>;
       getAppVersion: () => Promise<string>;

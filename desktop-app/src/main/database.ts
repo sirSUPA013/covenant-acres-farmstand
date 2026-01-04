@@ -190,6 +190,7 @@ export async function initDatabase(): Promise<void> {
       business_email TEXT,
       business_phone TEXT,
       default_cutoff_hours INTEGER DEFAULT 48,
+      require_payment_method INTEGER DEFAULT 0,
       notification_email INTEGER DEFAULT 1,
       notification_sms INTEGER DEFAULT 0,
       sms_provider TEXT,
@@ -216,12 +217,38 @@ export async function initDatabase(): Promise<void> {
       timestamp TEXT NOT NULL
     );
 
+    -- Admin Users
+    CREATE TABLE IF NOT EXISTS admin_users (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      pin_hash TEXT NOT NULL,
+      is_active INTEGER DEFAULT 1,
+      is_owner INTEGER DEFAULT 0,
+      last_login TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    -- Audit Log
+    CREATE TABLE IF NOT EXISTS audit_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id TEXT,
+      user_name TEXT,
+      action TEXT NOT NULL,
+      entity_type TEXT,
+      entity_id TEXT,
+      details TEXT,
+      created_at TEXT NOT NULL
+    );
+
     -- Indexes
     CREATE INDEX IF NOT EXISTS idx_orders_bake_slot ON orders(bake_slot_id);
     CREATE INDEX IF NOT EXISTS idx_orders_customer ON orders(customer_id);
     CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
     CREATE INDEX IF NOT EXISTS idx_bake_slots_date ON bake_slots(date);
     CREATE INDEX IF NOT EXISTS idx_customers_email ON customers(email);
+    CREATE INDEX IF NOT EXISTS idx_audit_log_user ON audit_log(user_id);
+    CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at);
   `);
 
   log('info', 'Database tables created/verified');

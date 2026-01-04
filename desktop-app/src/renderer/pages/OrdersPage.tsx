@@ -20,9 +20,15 @@ function OrdersPage() {
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState('');
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkStatus, setBulkStatus] = useState('');
+  const [bulkPayment, setBulkPayment] = useState('');
+  const [bulkPaymentMethod, setBulkPaymentMethod] = useState('');
+  const [requirePaymentMethod, setRequirePaymentMethod] = useState(false);
 
   useEffect(() => {
     loadOrders();
+    loadSettings();
 
     // Listen for new orders
     const unsubscribe = window.api.onNewOrder(() => {
@@ -31,6 +37,15 @@ function OrdersPage() {
 
     return unsubscribe;
   }, [statusFilter]);
+
+  async function loadSettings() {
+    try {
+      const settings = await window.api.getSettings();
+      setRequirePaymentMethod(settings.requirePaymentMethod || false);
+    } catch (error) {
+      console.error('Failed to load settings:', error);
+    }
+  }
 
   async function loadOrders() {
     setLoading(true);
@@ -81,6 +96,58 @@ function OrdersPage() {
     }
   }
 
+  function toggleSelection(orderId: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(orderId)) {
+        next.delete(orderId);
+      } else {
+        next.add(orderId);
+      }
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    if (selectedIds.size === orders.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(orders.map((o) => o.id)));
+    }
+  }
+
+  function clearSelection() {
+    setSelectedIds(new Set());
+    setBulkStatus('');
+    setBulkPayment('');
+    setBulkPaymentMethod('');
+  }
+
+  async function applyBulkUpdate() {
+    if (selectedIds.size === 0) return;
+
+    // Validate payment method requirement
+    if (requirePaymentMethod && bulkPayment === 'paid' && !bulkPaymentMethod) {
+      alert('Please select a payment method when marking orders as paid.');
+      return;
+    }
+
+    const updates: Record<string, string> = {};
+    if (bulkStatus) updates.status = bulkStatus;
+    if (bulkPayment) updates.payment_status = bulkPayment;
+    if (bulkPaymentMethod) updates.payment_method = bulkPaymentMethod;
+
+    if (Object.keys(updates).length === 0) return;
+
+    try {
+      await window.api.bulkUpdateOrders(Array.from(selectedIds), updates);
+      loadOrders();
+      clearSelection();
+    } catch (error) {
+      console.error('Bulk update failed:', error);
+    }
+  }
+
   const statusOptions = [
     { value: '', label: 'All Orders' },
     { value: 'submitted', label: 'Submitted' },
@@ -119,6 +186,65 @@ function OrdersPage() {
         </div>
       </div>
 
+      {/* Bulk Action Bar */}
+      {selectedIds.size > 0 && (
+        <div className="bulk-action-bar">
+          <span className="bulk-count">{selectedIds.size} order{selectedIds.size > 1 ? 's' : ''} selected</span>
+          <div className="bulk-actions">
+            <select
+              className="form-select bulk-select"
+              value={bulkStatus}
+              onChange={(e) => setBulkStatus(e.target.value)}
+            >
+              <option value="">Set Status...</option>
+              {statusOptions.slice(1).map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+            <select
+              className="form-select bulk-select"
+              value={bulkPayment}
+              onChange={(e) => {
+                setBulkPayment(e.target.value);
+                if (e.target.value !== 'paid') setBulkPaymentMethod('');
+              }}
+            >
+              <option value="">Set Payment...</option>
+              <option value="pending">Pending</option>
+              <option value="paid">Paid</option>
+              <option value="refunded">Refunded</option>
+              <option value="credited">Credited</option>
+            </select>
+            {bulkPayment === 'paid' && (
+              <select
+                className="form-select bulk-select"
+                value={bulkPaymentMethod}
+                onChange={(e) => setBulkPaymentMethod(e.target.value)}
+              >
+                <option value="">Payment Method{requirePaymentMethod ? '*' : ''}...</option>
+                <option value="cash">Cash</option>
+                <option value="venmo">Venmo</option>
+                <option value="paypal">PayPal</option>
+                <option value="check">Check</option>
+                <option value="other">Other</option>
+              </select>
+            )}
+            <button
+              className="btn btn-primary"
+              onClick={applyBulkUpdate}
+              disabled={!bulkStatus && !bulkPayment}
+            >
+              Apply
+            </button>
+            <button className="btn btn-secondary" onClick={clearSelection}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="card">
         {loading ? (
           <div className="loading">Loading orders...</div>
@@ -131,6 +257,13 @@ function OrdersPage() {
           <table className="data-table">
             <thead>
               <tr>
+                <th style={{ width: '40px' }}>
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.size === orders.length && orders.length > 0}
+                    onChange={toggleSelectAll}
+                  />
+                </th>
                 <th>Order #</th>
                 <th>Customer</th>
                 <th>Pickup</th>
@@ -143,7 +276,14 @@ function OrdersPage() {
             </thead>
             <tbody>
               {orders.map((order) => (
-                <tr key={order.id}>
+                <tr key={order.id} className={selectedIds.has(order.id) ? 'selected-row' : ''}>
+                  <td>
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(order.id)}
+                      onChange={() => toggleSelection(order.id)}
+                    />
+                  </td>
                   <td>{order.id.split('-')[0].toUpperCase()}</td>
                   <td>
                     {order.first_name} {order.last_name}
