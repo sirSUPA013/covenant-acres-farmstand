@@ -242,9 +242,8 @@ function ConfigPage() {
 
   // Format cost per unit for display
   function formatCostPerUnit(cost: number, unit: string) {
+    // Always show 4 decimal places for small costs, 2 for larger
     if (cost < 0.01) {
-      return `$${(cost * 1000).toFixed(2)}/kg`;
-    } else if (cost < 0.1) {
       return `$${cost.toFixed(4)}/${unit}`;
     } else {
       return `$${cost.toFixed(2)}/${unit}`;
