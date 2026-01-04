@@ -484,6 +484,11 @@ function SettingsPage() {
             <div className="card">
               <div className="card-header">
                 <h2 className="card-title">Google Sheets Integration</h2>
+                {!currentUser?.isDeveloper && (
+                  <span style={{ fontSize: '0.85rem', color: '#666', fontStyle: 'italic' }}>
+                    View only — contact developer to modify
+                  </span>
+                )}
               </div>
 
               <div className="form-group">
@@ -494,6 +499,8 @@ function SettingsPage() {
                   value={settings.googleSheetsId}
                   onChange={(e) => updateSetting('googleSheetsId', e.target.value)}
                   placeholder="From the spreadsheet URL"
+                  disabled={!currentUser?.isDeveloper}
+                  style={!currentUser?.isDeveloper ? { backgroundColor: '#f5f5f5', cursor: 'not-allowed' } : {}}
                 />
                 <p className="form-hint">
                   Find this in your Google Sheets URL: docs.google.com/spreadsheets/d/<strong>[SHEET_ID]</strong>/edit
@@ -504,11 +511,16 @@ function SettingsPage() {
                 <label className="form-label">Service Account Credentials (JSON)</label>
                 <textarea
                   className="form-textarea"
-                  value={settings.googleCredentials}
+                  value={currentUser?.isDeveloper ? settings.googleCredentials : (settings.googleCredentials ? '••••••••••••••••••••' : '')}
                   onChange={(e) => updateSetting('googleCredentials', e.target.value)}
-                  placeholder="Paste your service account JSON credentials here"
+                  placeholder={currentUser?.isDeveloper ? "Paste your service account JSON credentials here" : "Credentials hidden"}
                   rows={6}
-                  style={{ fontFamily: 'monospace', fontSize: '0.875rem' }}
+                  style={{
+                    fontFamily: 'monospace',
+                    fontSize: '0.875rem',
+                    ...((!currentUser?.isDeveloper) ? { backgroundColor: '#f5f5f5', cursor: 'not-allowed' } : {})
+                  }}
+                  disabled={!currentUser?.isDeveloper}
                 />
               </div>
 
