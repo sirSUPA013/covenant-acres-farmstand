@@ -1,0 +1,28 @@
+{
+  "name": "covenant-acres-farmstand",
+  "version": "1.0.0",
+  "description": "Order and production management system for Covenant Acres Farmstand",
+  "private": true,
+  "workspaces": [
+    "order-form",
+    "desktop-app",
+    "shared"
+  ],
+  "scripts": {
+    "dev:order-form": "npm run dev --workspace=order-form",
+    "dev:desktop": "npm run dev --workspace=desktop-app",
+    "build:order-form": "npm run build --workspace=order-form",
+    "build:desktop": "npm run build --workspace=desktop-app",
+    "build": "npm run build:order-form && npm run build:desktop",
+    "package": "npm run package --workspace=desktop-app",
+    "test": "npm run test --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SamJJohnson/covenant-acres-farmstand.git"
+  },
+  "author": "Sam Johnson",
+  "license": "UNLICENSED"
+}
