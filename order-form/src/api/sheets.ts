@@ -6,7 +6,7 @@
  * For development, it uses mock data.
  */
 
-import type { BakeSlotSummary, FlavorSummary, Order, Customer } from '../types';
+import type { BakeSlotSummary, FlavorSummary, Order } from '../types';
 
 // Configuration
 const API_BASE = import.meta.env.VITE_API_URL || '/api';
@@ -18,40 +18,45 @@ const mockBakeSlots: BakeSlotSummary[] = [
     id: 'slot-001',
     date: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString(),
     locationName: "Farmer's Market",
-    remainingCapacity: 18,
+    spotsRemaining: 18,
     isOpen: true,
   },
   {
     id: 'slot-002',
     date: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString(),
     locationName: 'Farm Pickup',
-    remainingCapacity: 24,
+    spotsRemaining: 24,
     isOpen: true,
   },
   {
     id: 'slot-003',
     date: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
     locationName: "Farmer's Market",
-    remainingCapacity: 3,
+    spotsRemaining: 3,
     isOpen: true,
   },
   {
     id: 'slot-004',
     date: new Date(Date.now() + 10 * 24 * 60 * 60 * 1000).toISOString(),
     locationName: 'Farm Pickup',
-    remainingCapacity: 0,
+    spotsRemaining: 0,
     isOpen: false,
   },
 ];
 
 const mockFlavors: FlavorSummary[] = [
-  { id: 'plain', name: 'Plain Sourdough', basePrice: 8.0, isActive: true },
-  { id: 'garlic-cheddar', name: 'Garlic Cheddar', basePrice: 10.0, isActive: true },
-  { id: 'jalapeno-cheddar', name: 'Jalapeño Cheddar', basePrice: 10.0, isActive: true },
-  { id: 'cinnamon-raisin', name: 'Cinnamon Raisin', basePrice: 10.0, isActive: true },
-  { id: 'double-chocolate', name: 'Double Chocolate', basePrice: 12.0, isActive: true },
-  { id: 'pumpkin-spice', name: 'Pumpkin Spice', basePrice: 12.0, isActive: false },
+  { id: 'plain', name: 'Plain Sourdough', sizes: [{ name: 'Regular', price: 8.0 }] },
+  { id: 'garlic-cheddar', name: 'Garlic Cheddar', sizes: [{ name: 'Regular', price: 10.0 }] },
+  { id: 'jalapeno-cheddar', name: 'Jalapeño Cheddar', sizes: [{ name: 'Regular', price: 10.0 }] },
+  { id: 'cinnamon-raisin', name: 'Cinnamon Raisin', sizes: [{ name: 'Regular', price: 10.0 }] },
+  { id: 'double-chocolate', name: 'Double Chocolate', sizes: [{ name: 'Regular', price: 12.0 }] },
+  { id: 'pumpkin-spice', name: 'Pumpkin Spice', sizes: [{ name: 'Regular', price: 12.0 }] },
 ];
+
+// Track which flavors are available (for mock purposes)
+const unavailableFlavors: Record<string, string[]> = {
+  'slot-003': ['cinnamon-raisin'],
+};
 
 interface CustomerData {
   firstName: string;
@@ -85,19 +90,16 @@ export const sheetsApi = {
   /**
    * Get available flavors for a specific bake slot
    */
-  async getFlavorsForSlot(slotId: string): Promise<FlavorSummary[]> {
+  async getFlavorsForSlot(_slotId: string): Promise<FlavorSummary[]> {
     if (USE_MOCK) {
       await new Promise((resolve) => setTimeout(resolve, 300));
-      // Simulate some flavors being sold out for certain slots
-      if (slotId === 'slot-003') {
-        return mockFlavors.map((f) =>
-          f.id === 'cinnamon-raisin' ? { ...f, isActive: false } : f
-        );
-      }
-      return mockFlavors;
+      // Filter out unavailable flavors for this slot
+      const unavailable = unavailableFlavors[_slotId] || [];
+      return mockFlavors.filter((f) => !unavailable.includes(f.id));
     }
 
-    const response = await fetch(`${API_BASE}/bake-slots/${slotId}/flavors`);
+    // Flavors are the same for all slots (filtered by season on server)
+    const response = await fetch(`${API_BASE}/flavors`);
     if (!response.ok) {
       throw new Error(`Failed to fetch flavors: ${response.statusText}`);
     }

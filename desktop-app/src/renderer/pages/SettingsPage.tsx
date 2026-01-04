@@ -38,10 +38,32 @@ function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [activeSection, setActiveSection] = useState<'general' | 'notifications' | 'integrations'>('general');
+  const [syncStatus, setSyncStatus] = useState<{ lastSync: string | null; pendingChanges: number; isOnline: boolean }>({
+    lastSync: null,
+    pendingChanges: 0,
+    isOnline: true,
+  });
 
   useEffect(() => {
     loadSettings();
+    loadSyncStatus();
+
+    // Listen for sync updates
+    const unsubscribe = window.api.onSyncUpdate((status) => {
+      setSyncStatus(status as typeof syncStatus);
+    });
+
+    return unsubscribe;
   }, []);
+
+  async function loadSyncStatus() {
+    try {
+      const status = await window.api.getSyncStatus();
+      setSyncStatus(status as typeof syncStatus);
+    } catch (error) {
+      console.error('Failed to load sync status:', error);
+    }
+  }
 
   async function loadSettings() {
     setLoading(true);
@@ -61,6 +83,20 @@ function SettingsPage() {
     setMessage(null);
     try {
       await window.api.saveSettings(settings);
+
+      // If Google Sheets credentials are provided, configure the sync
+      if (settings.googleSheetsId && settings.googleCredentials) {
+        try {
+          const credentials = JSON.parse(settings.googleCredentials);
+          await window.api.configureGoogleSheets(credentials, settings.googleSheetsId);
+        } catch (parseError) {
+          console.error('Invalid JSON credentials:', parseError);
+          setMessage({ type: 'error', text: 'Invalid JSON in credentials. Check the format.' });
+          setSaving(false);
+          return;
+        }
+      }
+
       setMessage({ type: 'success', text: 'Settings saved successfully!' });
       setTimeout(() => setMessage(null), 3000);
     } catch (error) {
@@ -348,11 +384,21 @@ function SettingsPage() {
               <div className="sync-info">
                 <p>
                   <strong>Last Sync:</strong>{' '}
-                  <span id="last-sync-time">Checking...</span>
+                  <span>
+                    {syncStatus.lastSync
+                      ? new Date(syncStatus.lastSync).toLocaleString()
+                      : 'Never'}
+                  </span>
                 </p>
                 <p>
                   <strong>Pending Changes:</strong>{' '}
-                  <span id="pending-changes">0</span>
+                  <span>{syncStatus.pendingChanges}</span>
+                </p>
+                <p>
+                  <strong>Status:</strong>{' '}
+                  <span style={{ color: syncStatus.isOnline ? '#2e7d32' : '#c62828' }}>
+                    {syncStatus.isOnline ? 'Online' : 'Offline'}
+                  </span>
                 </p>
               </div>
             </div>

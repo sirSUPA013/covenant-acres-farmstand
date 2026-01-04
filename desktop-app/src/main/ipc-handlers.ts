@@ -5,7 +5,7 @@
 
 import { ipcMain, shell, app } from 'electron';
 import { getDb } from './database';
-import { syncAll, getSyncStatus, signIn, signOut, isAuthenticated } from './sheets-sync';
+import { syncAll, getSyncStatus, signIn, signOut, isAuthenticated, setConfig } from './sheets-sync';
 import { log, createErrorReport, getLogPath } from './logger';
 
 export function setupIpcHandlers(): void {
@@ -117,7 +117,7 @@ export function setupIpcHandlers(): void {
     const params: unknown[] = [];
 
     if (filters?.upcoming) {
-      query += ' AND b.date >= date("now")';
+      query += " AND b.date >= date('now')";
     }
     if (filters?.locationId) {
       query += ' AND b.location_id = ?';
@@ -524,26 +524,87 @@ export function setupIpcHandlers(): void {
       string,
       unknown
     > | undefined;
-    return settings || {};
+
+    if (!settings) return {};
+
+    // Map snake_case database columns to camelCase for frontend
+    const keyMap: Record<string, string> = {
+      business_name: 'businessName',
+      business_email: 'businessEmail',
+      business_phone: 'businessPhone',
+      default_cutoff_hours: 'defaultCutoffHours',
+      notification_email: 'notificationEmail',
+      notification_sms: 'notificationSms',
+      sms_provider: 'smsProvider',
+      sms_api_key: 'smsApiKey',
+      email_provider: 'emailProvider',
+      email_api_key: 'emailApiKey',
+      google_sheets_id: 'googleSheetsId',
+      google_credentials: 'googleCredentials',
+      quiet_hours_start: 'quietHoursStart',
+      quiet_hours_end: 'quietHoursEnd',
+    };
+
+    const converted: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(settings)) {
+      const frontendKey = keyMap[key] || key;
+      // Convert 0/1 back to boolean for checkbox fields
+      if (frontendKey === 'notificationEmail' || frontendKey === 'notificationSms') {
+        converted[frontendKey] = value === 1;
+      } else {
+        converted[frontendKey] = value;
+      }
+    }
+    return converted;
   });
 
   ipcMain.handle('settings:save', async (_event, data) => {
     const db = getDb();
     const now = new Date().toISOString();
 
+    // Map camelCase keys to snake_case database columns
+    const keyMap: Record<string, string> = {
+      businessName: 'business_name',
+      businessEmail: 'business_email',
+      businessPhone: 'business_phone',
+      defaultCutoffHours: 'default_cutoff_hours',
+      notificationEmail: 'notification_email',
+      notificationSms: 'notification_sms',
+      smsProvider: 'sms_provider',
+      smsApiKey: 'sms_api_key',
+      emailProvider: 'email_provider',
+      emailApiKey: 'email_api_key',
+      googleSheetsId: 'google_sheets_id',
+      googleCredentials: 'google_credentials',
+      quietHoursStart: 'quiet_hours_start',
+      quietHoursEnd: 'quiet_hours_end',
+    };
+
+    // Convert data keys to snake_case and booleans to integers
+    const convertedData: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(data)) {
+      const dbKey = keyMap[key] || key;
+      // SQLite doesn't support booleans, convert to 1/0
+      if (typeof value === 'boolean') {
+        convertedData[dbKey] = value ? 1 : 0;
+      } else {
+        convertedData[dbKey] = value;
+      }
+    }
+
     // Check if settings exist
     const existing = db.prepare('SELECT id FROM settings WHERE id = 1').get();
 
     if (existing) {
-      const fields = Object.keys(data)
+      const fields = Object.keys(convertedData)
         .map((k) => `${k} = ?`)
         .join(', ');
-      const values = [...Object.values(data), now];
+      const values = [...Object.values(convertedData), now];
       db.prepare(`UPDATE settings SET ${fields}, updated_at = ? WHERE id = 1`).run(...values);
     } else {
-      const keys = ['id', ...Object.keys(data), 'created_at', 'updated_at'];
+      const keys = ['id', ...Object.keys(convertedData), 'created_at', 'updated_at'];
       const placeholders = keys.map(() => '?').join(', ');
-      const values = [1, ...Object.values(data), now, now];
+      const values = [1, ...Object.values(convertedData), now, now];
       db.prepare(`INSERT INTO settings (${keys.join(', ')}) VALUES (${placeholders})`).run(
         ...values
       );
@@ -587,6 +648,16 @@ export function setupIpcHandlers(): void {
 
   ipcMain.handle('auth:status', async () => {
     return { isSignedIn: isAuthenticated() };
+  });
+
+  ipcMain.handle('auth:configure', async (_event, credentials, spreadsheetId) => {
+    try {
+      await setConfig(credentials, spreadsheetId);
+      return { success: true };
+    } catch (error) {
+      log('error', 'Failed to configure Google Sheets', { error });
+      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+    }
   });
 
   // System

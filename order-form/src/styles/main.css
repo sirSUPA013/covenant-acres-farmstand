@@ -83,6 +83,17 @@ body {
   margin: 0 auto;
 }
 
+.header-logo {
+  width: 200px;
+  height: 200px;
+  object-fit: contain;
+  margin-bottom: var(--spacing-lg);
+  border-radius: 50%;
+  background: var(--white);
+  padding: 12px;
+  box-shadow: var(--shadow-lg);
+}
+
 .logo {
   font-family: var(--font-heading);
   font-size: 2.5rem;

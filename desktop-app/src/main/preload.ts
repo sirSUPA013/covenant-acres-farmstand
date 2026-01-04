@@ -78,6 +78,8 @@ contextBridge.exposeInMainWorld('api', {
   signIn: () => ipcRenderer.invoke('auth:signIn'),
   signOut: () => ipcRenderer.invoke('auth:signOut'),
   getAuthStatus: () => ipcRenderer.invoke('auth:status'),
+  configureGoogleSheets: (credentials: object, spreadsheetId: string) =>
+    ipcRenderer.invoke('auth:configure', credentials, spreadsheetId),
 
   // System
   sendErrorReport: () => ipcRenderer.invoke('system:sendErrorReport'),
@@ -158,6 +160,7 @@ declare global {
       signIn: () => Promise<void>;
       signOut: () => Promise<void>;
       getAuthStatus: () => Promise<{ isSignedIn: boolean; email?: string }>;
+      configureGoogleSheets: (credentials: object, spreadsheetId: string) => Promise<{ success: boolean; error?: string }>;
 
       sendErrorReport: () => Promise<void>;
       getAppVersion: () => Promise<string>;

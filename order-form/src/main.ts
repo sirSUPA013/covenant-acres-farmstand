@@ -82,21 +82,21 @@ async function loadBakeSlots(): Promise<void> {
     slotsContainer.innerHTML = state.availableSlots
       .map((slot) => {
         const availabilityClass =
-          slot.remainingCapacity <= 0
+          slot.spotsRemaining <= 0
             ? 'sold-out'
-            : slot.remainingCapacity <= 5
+            : slot.spotsRemaining <= 5
               ? 'low'
               : '';
 
         const availabilityText =
-          slot.remainingCapacity <= 0
+          slot.spotsRemaining <= 0
             ? 'Sold Out'
-            : `${slot.remainingCapacity} spots left`;
+            : `${slot.spotsRemaining} spots left`;
 
         return `
-        <div class="bake-slot-card ${slot.remainingCapacity <= 0 ? 'sold-out' : ''}"
+        <div class="bake-slot-card ${slot.spotsRemaining <= 0 ? 'sold-out' : ''}"
              data-slot-id="${slot.id}"
-             ${slot.remainingCapacity <= 0 ? '' : 'tabindex="0"'}>
+             ${slot.spotsRemaining <= 0 ? '' : 'tabindex="0"'}>
           <div class="bake-slot-date">${formatDate(slot.date)}</div>
           <div class="bake-slot-location">${slot.locationName}</div>
           <div class="bake-slot-availability ${availabilityClass}">${availabilityText}</div>
@@ -153,17 +153,16 @@ function renderFlavors(): void {
   container.innerHTML = state.availableFlavors
     .map((flavor) => {
       const currentQty = state.orderItems.get(flavor.id)?.quantity || 0;
-      const isUnavailable = flavor.isActive === false;
+      const price = flavor.sizes[0]?.price || 0;
 
       return `
-      <div class="flavor-card ${isUnavailable ? 'unavailable' : ''}" data-flavor-id="${flavor.id}">
+      <div class="flavor-card" data-flavor-id="${flavor.id}">
         <div class="flavor-name">${flavor.name}</div>
-        <div class="flavor-price">$${flavor.basePrice.toFixed(2)}</div>
-        ${isUnavailable ? '<div class="flavor-availability sold-out">Sold out</div>' : ''}
+        <div class="flavor-price">$${price.toFixed(2)}</div>
         <div class="flavor-quantity">
-          <button class="qty-btn" data-action="decrease" ${currentQty === 0 || isUnavailable ? 'disabled' : ''}>−</button>
+          <button class="qty-btn" data-action="decrease" ${currentQty === 0 ? 'disabled' : ''}>−</button>
           <span class="qty-value">${currentQty}</span>
-          <button class="qty-btn" data-action="increase" ${isUnavailable ? 'disabled' : ''}>+</button>
+          <button class="qty-btn" data-action="increase">+</button>
         </div>
       </div>
     `;
@@ -190,6 +189,7 @@ function updateQuantity(flavorId: string, delta: number): void {
   const flavor = state.availableFlavors.find((f) => f.id === flavorId);
   if (!flavor) return;
 
+  const price = flavor.sizes[0]?.price || 0;
   const currentItem = state.orderItems.get(flavorId);
   const currentQty = currentItem?.quantity || 0;
   const newQty = Math.max(0, currentQty + delta);
@@ -200,10 +200,10 @@ function updateQuantity(flavorId: string, delta: number): void {
     state.orderItems.set(flavorId, {
       flavorId,
       flavorName: flavor.name,
-      size: 'Regular',
+      size: flavor.sizes[0]?.name || 'Regular',
       quantity: newQty,
-      unitPrice: flavor.basePrice,
-      totalPrice: newQty * flavor.basePrice,
+      unitPrice: price,
+      totalPrice: newQty * price,
     });
   }
 

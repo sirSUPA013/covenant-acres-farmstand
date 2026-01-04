@@ -1,10 +1,153 @@
 /**
  * API: POST /api/orders
- * Submit a new order
+ * Submit a new order to Google Sheets
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { appendRow, findRow, updateRow, readSheet, SHEETS, parseRows } from './sheets-client';
+import { createSign } from 'crypto';
+
+// ============ Google Sheets Integration ============
+
+interface ServiceAccountCredentials {
+  client_email: string;
+  private_key: string;
+}
+
+interface TokenResponse {
+  access_token: string;
+  expires_in: number;
+}
+
+let cachedToken: { token: string; expires: number } | null = null;
+
+function createJWT(credentials: ServiceAccountCredentials): string {
+  const now = Math.floor(Date.now() / 1000);
+  const header = { alg: 'RS256', typ: 'JWT' };
+  const payload = {
+    iss: credentials.client_email,
+    scope: 'https://www.googleapis.com/auth/spreadsheets',
+    aud: 'https://oauth2.googleapis.com/token',
+    iat: now,
+    exp: now + 3600,
+  };
+
+  const base64Header = Buffer.from(JSON.stringify(header)).toString('base64url');
+  const base64Payload = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const signatureInput = `${base64Header}.${base64Payload}`;
+
+  const sign = createSign('RSA-SHA256');
+  sign.update(signatureInput);
+  const signature = sign.sign(credentials.private_key, 'base64url');
+
+  return `${signatureInput}.${signature}`;
+}
+
+async function getAccessToken(credentials: ServiceAccountCredentials): Promise<string> {
+  // Use cached token if valid
+  if (cachedToken && cachedToken.expires > Date.now()) {
+    return cachedToken.token;
+  }
+
+  const jwt = createJWT(credentials);
+  const response = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+      assertion: jwt,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Token exchange failed: ${await response.text()}`);
+  }
+
+  const data = await response.json() as TokenResponse;
+  cachedToken = {
+    token: data.access_token,
+    expires: Date.now() + (data.expires_in - 60) * 1000,
+  };
+  return data.access_token;
+}
+
+function getConfig() {
+  const credentialsJson = process.env.GOOGLE_SHEETS_CREDENTIALS;
+  const spreadsheetId = process.env.GOOGLE_SHEETS_SPREADSHEET_ID;
+
+  if (!credentialsJson || !spreadsheetId) {
+    throw new Error('Missing Google Sheets configuration');
+  }
+
+  return {
+    credentials: JSON.parse(credentialsJson) as ServiceAccountCredentials,
+    spreadsheetId: spreadsheetId.trim(),
+  };
+}
+
+async function readSheet(sheetName: string): Promise<string[][]> {
+  const { credentials, spreadsheetId } = getConfig();
+  const accessToken = await getAccessToken(credentials);
+
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(sheetName)}`;
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Sheets read error: ${await response.text()}`);
+  }
+
+  const data = await response.json() as { values?: string[][] };
+  return data.values || [];
+}
+
+async function appendRow(sheetName: string, values: string[]): Promise<void> {
+  const { credentials, spreadsheetId } = getConfig();
+  const accessToken = await getAccessToken(credentials);
+
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(sheetName)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      values: [values],
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Sheets append error: ${await response.text()}`);
+  }
+}
+
+async function updateRow(sheetName: string, rowIndex: number, values: string[]): Promise<void> {
+  const { credentials, spreadsheetId } = getConfig();
+  const accessToken = await getAccessToken(credentials);
+
+  // A1 notation for the row (rowIndex is 0-based, Sheets is 1-based)
+  const range = `${sheetName}!A${rowIndex + 1}`;
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`;
+
+  const response = await fetch(url, {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      values: [values],
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Sheets update error: ${await response.text()}`);
+  }
+}
+
+// ============ Data Types ============
 
 interface OrderItem {
   flavorId: string;
@@ -30,9 +173,10 @@ interface OrderPayload {
     phone: string;
     notificationPref: string;
     smsOptIn: boolean;
-    createAccount: boolean;
   };
 }
+
+// ============ Handler ============
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // CORS
@@ -66,9 +210,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
-    // Check if bake slot is still available
-    const slotResult = await findRow(SHEETS.BAKE_SLOTS, 0, order.bakeSlotId);
-    if (!slotResult) {
+    // Read current data
+    const [slotsData, customersData] = await Promise.all([
+      readSheet('BakeSlots'),
+      readSheet('Customers'),
+    ]);
+
+    // Find the bake slot
+    const slotHeaders = slotsData[0] || [];
+    const slotIdIdx = slotHeaders.indexOf('id');
+    const totalCapIdx = slotHeaders.indexOf('total_capacity');
+    const currentOrdersIdx = slotHeaders.indexOf('current_orders');
+
+    let slotRowIndex = -1;
+    let slotRow: string[] | null = null;
+
+    for (let i = 1; i < slotsData.length; i++) {
+      if (slotsData[i][slotIdIdx] === order.bakeSlotId) {
+        slotRowIndex = i;
+        slotRow = slotsData[i];
+        break;
+      }
+    }
+
+    if (!slotRow) {
       return res.status(400).json({
         error: 'Bake slot not found',
         code: 'ORD-SLOT_CLOSED'
@@ -76,8 +241,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // Check capacity
-    const totalCapacity = parseInt(slotResult.data[4]) || 0;
-    const currentOrders = parseInt(slotResult.data[5]) || 0;
+    const totalCapacity = parseInt(slotRow[totalCapIdx]) || 0;
+    const currentOrders = parseInt(slotRow[currentOrdersIdx]) || 0;
     const orderQuantity = order.items.reduce((sum, item) => sum + item.quantity, 0);
 
     if (currentOrders + orderQuantity > totalCapacity) {
@@ -88,96 +253,91 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // Find or create customer
-    let customerId: string;
-    const existingCustomer = await findRow(SHEETS.CUSTOMERS, 3, customer.email);
+    const custHeaders = customersData[0] || [];
+    const custEmailIdx = custHeaders.indexOf('email');
+    const custIdIdx = custHeaders.indexOf('id');
 
-    if (existingCustomer) {
-      customerId = existingCustomer.data[0];
-      // Update customer info
-      const updatedCustomer = [
-        customerId,
-        customer.firstName,
-        customer.lastName,
-        customer.email,
-        customer.phone,
-        customer.notificationPref,
-        customer.smsOptIn ? 'TRUE' : 'FALSE',
-        customer.smsOptIn ? new Date().toISOString() : existingCustomer.data[7],
-        customer.createAccount ? 'TRUE' : 'FALSE',
-        '', // passwordHash
-        existingCustomer.data[10] || '0', // creditBalance
-        (parseInt(existingCustomer.data[11]) || 0) + 1, // totalOrders
-        parseFloat(existingCustomer.data[12] || '0') + order.totalAmount, // totalSpent
-        existingCustomer.data[13] || new Date().toISOString(), // firstOrderDate
-        new Date().toISOString(), // lastOrderDate
-        existingCustomer.data[15], // createdAt
-        new Date().toISOString(), // updatedAt
-      ];
-      await updateRow(SHEETS.CUSTOMERS, existingCustomer.rowIndex, updatedCustomer);
-    } else {
-      customerId = `cust-${Date.now().toString(36)}`;
-      const now = new Date().toISOString();
-      const newCustomer = [
-        customerId,
-        customer.firstName,
-        customer.lastName,
-        customer.email,
-        customer.phone,
-        customer.notificationPref,
-        customer.smsOptIn ? 'TRUE' : 'FALSE',
-        customer.smsOptIn ? now : '',
-        customer.createAccount ? 'TRUE' : 'FALSE',
-        '', // passwordHash
-        '0', // creditBalance
-        '1', // totalOrders
-        order.totalAmount.toString(), // totalSpent
-        now, // firstOrderDate
-        now, // lastOrderDate
-        now, // createdAt
-        now, // updatedAt
-      ];
-      await appendRow(SHEETS.CUSTOMERS, newCustomer);
+    let customerId: string;
+    let existingCustRowIndex = -1;
+
+    for (let i = 1; i < customersData.length; i++) {
+      if (customersData[i][custEmailIdx]?.toLowerCase() === customer.email.toLowerCase()) {
+        customerId = customersData[i][custIdIdx];
+        existingCustRowIndex = i;
+        break;
+      }
     }
 
-    // Create order
     const now = new Date().toISOString();
-    const itemsJson = JSON.stringify(order.items);
 
+    if (existingCustRowIndex === -1) {
+      // Create new customer
+      customerId = `cust-${Date.now().toString(36)}`;
+      const newCustomer = [
+        customerId,                           // id
+        customer.firstName,                   // first_name
+        customer.lastName,                    // last_name
+        customer.email,                       // email
+        customer.phone,                       // phone
+        customer.notificationPref,            // notification_pref
+        customer.smsOptIn ? '1' : '0',        // sms_opt_in
+        '0',                                  // credit_balance
+        '1',                                  // total_orders
+        order.totalAmount.toString(),         // total_spent
+        now,                                  // created_at
+        now,                                  // updated_at
+      ];
+      await appendRow('Customers', newCustomer);
+    } else {
+      customerId = customersData[existingCustRowIndex][custIdIdx];
+      // Update existing customer stats
+      const existingRow = customersData[existingCustRowIndex];
+      const totalOrdersIdx = custHeaders.indexOf('total_orders');
+      const totalSpentIdx = custHeaders.indexOf('total_spent');
+      const updatedAtIdx = custHeaders.indexOf('updated_at');
+
+      const updatedRow = [...existingRow];
+      updatedRow[totalOrdersIdx] = ((parseInt(existingRow[totalOrdersIdx]) || 0) + 1).toString();
+      updatedRow[totalSpentIdx] = ((parseFloat(existingRow[totalSpentIdx]) || 0) + order.totalAmount).toString();
+      updatedRow[updatedAtIdx] = now;
+
+      await updateRow('Customers', existingCustRowIndex, updatedRow);
+    }
+
+    // Create order row matching sheet columns:
+    // id, customer_id, bake_slot_id, items, total_amount, status, payment_method, payment_status, customer_notes, admin_notes, created_at, updated_at
     const orderRow = [
       order.id,
       customerId,
       order.bakeSlotId,
-      itemsJson,
+      JSON.stringify(order.items),
       order.totalAmount.toString(),
-      'submitted', // status
-      '', // paymentMethod
-      'pending', // paymentStatus
-      now, // createdAt
-      now, // updatedAt
-      slotResult.data[6], // cutoffAt (from slot)
-      order.customerNotes,
-      '', // adminNotes
-      '0', // creditApplied
-      '', // adjustmentReason
+      'submitted',
+      '',                                     // payment_method
+      'pending',                              // payment_status
+      order.customerNotes || '',
+      '',                                     // admin_notes
+      now,
+      now,
     ];
 
-    await appendRow(SHEETS.ORDERS, orderRow);
+    await appendRow('Orders', orderRow);
 
     // Update bake slot order count
-    const updatedSlot = [...slotResult.data];
-    updatedSlot[5] = (currentOrders + orderQuantity).toString();
-    await updateRow(SHEETS.BAKE_SLOTS, slotResult.rowIndex, updatedSlot);
-
-    // TODO: Send confirmation notification
+    const updatedSlot = [...slotRow];
+    updatedSlot[currentOrdersIdx] = (currentOrders + orderQuantity).toString();
+    await updateRow('BakeSlots', slotRowIndex, updatedSlot);
 
     return res.status(200).json({
       orderId: order.id,
       message: 'Order placed successfully'
     });
+
   } catch (error) {
     console.error('Error submitting order:', error);
     return res.status(500).json({
       error: 'Failed to submit order',
+      details: error instanceof Error ? error.message : 'Unknown error',
       code: 'ORD-001'
     });
   }

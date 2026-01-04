@@ -90,11 +90,3 @@ app.on('activate', () => {
   }
 });
 
-// Handle uncaught errors
-process.on('uncaughtException', (error) => {
-  log('error', 'Uncaught exception', { error: error.message, stack: error.stack });
-});
-
-process.on('unhandledRejection', (reason) => {
-  log('error', 'Unhandled rejection', { reason });
-});

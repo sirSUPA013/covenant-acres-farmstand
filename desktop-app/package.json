@@ -20,7 +20,9 @@
     "googleapis": "^129.0.0"
   },
   "devDependencies": {
+    "@electron/rebuild": "^4.0.2",
     "@types/better-sqlite3": "^7.6.8",
+    "@types/node": "^25.0.3",
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
     "@vitejs/plugin-react": "^4.2.0",

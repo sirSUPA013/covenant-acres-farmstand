@@ -1,17 +1,31 @@
 /**
  * Google Sheets Sync
- * Handles bidirectional sync between local SQLite and Google Sheets
+ * Handles sync between local SQLite and Google Sheets using service account JWT auth
  */
 
-import { google, sheets_v4 } from 'googleapis';
+import { createSign } from 'crypto';
 import Store from 'electron-store';
 import { BrowserWindow } from 'electron';
 import { getDb } from './database';
 import { log } from './logger';
+import * as fs from 'fs';
+import * as path from 'path';
+import { app } from 'electron';
 
 const store = new Store();
 
-let sheetsClient: sheets_v4.Sheets | null = null;
+// Config
+interface ServiceAccountCredentials {
+  client_email: string;
+  private_key: string;
+}
+
+interface TokenResponse {
+  access_token: string;
+  expires_in: number;
+}
+
+let cachedToken: { token: string; expires: number } | null = null;
 let syncInterval: NodeJS.Timeout | null = null;
 let isOnline = true;
 
@@ -21,6 +35,7 @@ interface SyncStatus {
   lastSync: string | null;
   pendingChanges: number;
   isSyncing: boolean;
+  isConfigured: boolean;
 }
 
 let syncStatus: SyncStatus = {
@@ -28,42 +43,151 @@ let syncStatus: SyncStatus = {
   lastSync: null,
   pendingChanges: 0,
   isSyncing: false,
+  isConfigured: false,
 };
 
 export function getSyncStatus(): SyncStatus {
   return { ...syncStatus };
 }
 
-export async function initSheetsSync(): Promise<void> {
-  // Check for stored credentials
-  const credentials = store.get('googleCredentials') as object | undefined;
-  if (credentials) {
-    try {
-      await initializeSheetsClient(credentials);
-      startPeriodicSync();
-    } catch (error) {
-      log('warn', 'Stored credentials invalid, need to re-authenticate', { error });
+// JWT-based authentication (same as Vercel API)
+function createJWT(credentials: ServiceAccountCredentials): string {
+  const now = Math.floor(Date.now() / 1000);
+  const header = { alg: 'RS256', typ: 'JWT' };
+  const payload = {
+    iss: credentials.client_email,
+    scope: 'https://www.googleapis.com/auth/spreadsheets',
+    aud: 'https://oauth2.googleapis.com/token',
+    iat: now,
+    exp: now + 3600,
+  };
+
+  const base64Header = Buffer.from(JSON.stringify(header)).toString('base64url');
+  const base64Payload = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const signatureInput = `${base64Header}.${base64Payload}`;
+
+  const sign = createSign('RSA-SHA256');
+  sign.update(signatureInput);
+  const signature = sign.sign(credentials.private_key, 'base64url');
+
+  return `${signatureInput}.${signature}`;
+}
+
+async function getAccessToken(credentials: ServiceAccountCredentials): Promise<string> {
+  // Use cached token if valid
+  if (cachedToken && cachedToken.expires > Date.now()) {
+    return cachedToken.token;
+  }
+
+  const jwt = createJWT(credentials);
+  const response = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+      assertion: jwt,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Token exchange failed: ${await response.text()}`);
+  }
+
+  const data = (await response.json()) as TokenResponse;
+  cachedToken = {
+    token: data.access_token,
+    expires: Date.now() + (data.expires_in - 60) * 1000,
+  };
+  return data.access_token;
+}
+
+function getConfig(): { credentials: ServiceAccountCredentials; spreadsheetId: string } | null {
+  // Try environment variables first
+  let credentialsJson = process.env.GOOGLE_SHEETS_CREDENTIALS;
+  let spreadsheetId = process.env.GOOGLE_SHEETS_SPREADSHEET_ID;
+
+  // Fall back to electron-store
+  if (!credentialsJson) {
+    credentialsJson = store.get('googleCredentials') as string | undefined;
+  }
+  if (!spreadsheetId) {
+    spreadsheetId = store.get('spreadsheetId') as string | undefined;
+  }
+
+  // Fall back to config file in app data
+  if (!credentialsJson || !spreadsheetId) {
+    const configPath = path.join(app.getPath('userData'), 'google-config.json');
+    if (fs.existsSync(configPath)) {
+      try {
+        const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+        if (!credentialsJson && config.credentials) {
+          credentialsJson = JSON.stringify(config.credentials);
+        }
+        if (!spreadsheetId && config.spreadsheetId) {
+          spreadsheetId = config.spreadsheetId;
+        }
+      } catch (error) {
+        log('error', 'Failed to read config file', { error });
+      }
     }
+  }
+
+  if (!credentialsJson || !spreadsheetId) {
+    return null;
+  }
+
+  try {
+    const credentials =
+      typeof credentialsJson === 'string'
+        ? JSON.parse(credentialsJson)
+        : credentialsJson;
+    return { credentials, spreadsheetId: spreadsheetId.trim() };
+  } catch (error) {
+    log('error', 'Failed to parse credentials', { error });
+    return null;
+  }
+}
+
+async function readSheet(sheetName: string): Promise<string[][]> {
+  const config = getConfig();
+  if (!config) {
+    throw new Error('Google Sheets not configured');
+  }
+
+  const accessToken = await getAccessToken(config.credentials);
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${config.spreadsheetId}/values/${encodeURIComponent(sheetName)}`;
+
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Sheets read error: ${await response.text()}`);
+  }
+
+  const data = (await response.json()) as { values?: string[][] };
+  return data.values || [];
+}
+
+export async function initSheetsSync(): Promise<void> {
+  const config = getConfig();
+  if (config) {
+    syncStatus.isConfigured = true;
+    log('info', 'Google Sheets configured, starting sync');
+    startPeriodicSync();
+  } else {
+    syncStatus.isConfigured = false;
+    log('warn', 'Google Sheets not configured - create google-config.json in app data folder');
   }
 
   // Monitor online status
   setInterval(checkOnlineStatus, 30000);
 }
 
-async function initializeSheetsClient(credentials: object): Promise<void> {
-  const auth = new google.auth.GoogleAuth({
-    credentials,
-    scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-  });
-
-  sheetsClient = google.sheets({ version: 'v4', auth });
-  log('info', 'Google Sheets client initialized');
-}
-
 function startPeriodicSync(): void {
   // Sync every 2 minutes
   syncInterval = setInterval(() => {
-    if (isOnline && !syncStatus.isSyncing) {
+    if (isOnline && !syncStatus.isSyncing && syncStatus.isConfigured) {
       syncAll().catch((error) => {
         log('error', 'Periodic sync failed', { error });
       });
@@ -85,15 +209,14 @@ export function stopSync(): void {
 
 async function checkOnlineStatus(): Promise<void> {
   try {
-    const response = await fetch('https://www.google.com/favicon.ico', {
+    await fetch('https://www.google.com/favicon.ico', {
       method: 'HEAD',
-      mode: 'no-cors',
     });
     const wasOffline = !isOnline;
     isOnline = true;
     syncStatus.isOnline = true;
 
-    if (wasOffline) {
+    if (wasOffline && syncStatus.isConfigured) {
       log('info', 'Connection restored, syncing...');
       await syncAll();
     }
@@ -107,8 +230,9 @@ async function checkOnlineStatus(): Promise<void> {
 }
 
 export async function syncAll(): Promise<void> {
-  if (!sheetsClient) {
-    log('warn', 'Sheets client not initialized, skipping sync');
+  const config = getConfig();
+  if (!config) {
+    log('warn', 'Sheets not configured, skipping sync');
     return;
   }
 
@@ -121,13 +245,10 @@ export async function syncAll(): Promise<void> {
   notifyRenderer();
 
   try {
-    log('info', 'Starting full sync...');
+    log('info', 'Starting full sync from Google Sheets...');
 
     // Pull from Sheets
     await pullFromSheets();
-
-    // Push local changes
-    await pushToSheets();
 
     syncStatus.lastSync = new Date().toISOString();
     syncStatus.pendingChanges = 0;
@@ -143,109 +264,123 @@ export async function syncAll(): Promise<void> {
 }
 
 async function pullFromSheets(): Promise<void> {
-  const spreadsheetId = store.get('spreadsheetId') as string;
-  if (!spreadsheetId || !sheetsClient) return;
+  const tables = [
+    { sheet: 'Orders', table: 'orders' },
+    { sheet: 'Customers', table: 'customers' },
+    { sheet: 'BakeSlots', table: 'bake_slots' },
+    { sheet: 'Flavors', table: 'flavors' },
+    { sheet: 'Locations', table: 'locations' },
+  ];
 
-  const tables = ['Orders', 'Customers', 'BakeSlots', 'Flavors', 'Locations', 'Recipes'];
-
-  for (const table of tables) {
+  for (const { sheet, table } of tables) {
     try {
-      const response = await sheetsClient.spreadsheets.values.get({
-        spreadsheetId,
-        range: table,
-      });
+      log('info', `Pulling ${sheet}...`);
+      const rows = await readSheet(sheet);
 
-      const rows = response.data.values || [];
-      if (rows.length < 2) continue;
+      if (rows.length < 2) {
+        log('debug', `${sheet} is empty or has no data rows`);
+        continue;
+      }
 
       const headers = rows[0];
       const data = rows.slice(1);
 
-      // Update local database
-      updateLocalTable(table.toLowerCase(), headers, data);
+      updateLocalTable(table, headers, data);
+      log('info', `Pulled ${data.length} rows from ${sheet}`);
     } catch (error) {
-      log('error', `Failed to pull ${table}`, { error });
+      log('error', `Failed to pull ${sheet}`, { error });
     }
   }
 }
 
 function updateLocalTable(table: string, headers: string[], rows: string[][]): void {
   const db = getDb();
+  const now = new Date().toISOString();
 
-  // Map table names to local schema
-  const tableMap: Record<string, string> = {
-    orders: 'orders',
-    customers: 'customers',
-    bakeslots: 'bake_slots',
-    flavors: 'flavors',
-    locations: 'locations',
-    recipes: 'recipes',
+  // Map sheet column headers to database column names
+  const columnMap: Record<string, string> = {
+    // Common mappings
+    id: 'id',
+    // Orders
+    customer_id: 'customer_id',
+    bake_slot_id: 'bake_slot_id',
+    items: 'items',
+    total_amount: 'total_amount',
+    status: 'status',
+    payment_method: 'payment_method',
+    payment_status: 'payment_status',
+    customer_notes: 'customer_notes',
+    admin_notes: 'admin_notes',
+    created_at: 'created_at',
+    updated_at: 'updated_at',
+    // Customers
+    first_name: 'first_name',
+    last_name: 'last_name',
+    email: 'email',
+    phone: 'phone',
+    notification_pref: 'notification_pref',
+    sms_opt_in: 'sms_opt_in',
+    credit_balance: 'credit_balance',
+    total_orders: 'total_orders',
+    total_spent: 'total_spent',
+    // BakeSlots
+    date: 'date',
+    location_id: 'location_id',
+    total_capacity: 'total_capacity',
+    current_orders: 'current_orders',
+    cutoff_time: 'cutoff_time',
+    is_open: 'is_open',
+    // Flavors
+    name: 'name',
+    description: 'description',
+    sizes: 'sizes',
+    is_active: 'is_active',
+    season: 'season',
+    sort_order: 'sort_order',
+    // Locations
+    address: 'address',
   };
 
-  const localTable = tableMap[table];
-  if (!localTable) return;
-
-  const now = new Date().toISOString();
+  // Get table columns from DB
+  const tableInfo = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  const dbColumns = new Set(tableInfo.map((col) => col.name));
 
   for (const row of rows) {
     const id = row[0];
     if (!id) continue;
 
-    // Check if record exists and if remote is newer
-    const existing = db.prepare(`SELECT synced_at FROM ${localTable} WHERE id = ?`).get(id) as
-      | { synced_at: string }
-      | undefined;
+    // Build column/value pairs
+    const columns: string[] = [];
+    const values: (string | null)[] = [];
 
-    if (!existing) {
-      // Insert new record
-      const columns = headers.map((h) => h.toLowerCase().replace(/([A-Z])/g, '_$1').toLowerCase());
-      const placeholders = columns.map(() => '?').join(', ');
-      const values = row.map((v) => v || null);
-      values.push(now); // synced_at
-
-      try {
-        db.prepare(
-          `INSERT OR REPLACE INTO ${localTable} (${columns.join(', ')}, synced_at) VALUES (${placeholders}, ?)`
-        ).run(...values);
-      } catch (error) {
-        log('debug', `Could not insert into ${localTable}`, { error, id });
+    headers.forEach((header, index) => {
+      const dbColumn = columnMap[header.toLowerCase()] || header.toLowerCase();
+      if (dbColumns.has(dbColumn)) {
+        columns.push(dbColumn);
+        values.push(row[index] || null);
       }
+    });
+
+    // Add synced_at
+    if (dbColumns.has('synced_at')) {
+      columns.push('synced_at');
+      values.push(now);
     }
-  }
-}
 
-async function pushToSheets(): Promise<void> {
-  const spreadsheetId = store.get('spreadsheetId') as string;
-  if (!spreadsheetId || !sheetsClient) return;
+    if (columns.length === 0) continue;
 
-  const db = getDb();
-
-  // Find records that have been modified locally but not synced
-  const tables = ['orders', 'customers', 'bake_slots', 'flavors', 'locations', 'recipes'];
-
-  for (const table of tables) {
     try {
-      const unsynced = db
-        .prepare(`SELECT * FROM ${table} WHERE synced_at IS NULL OR updated_at > synced_at`)
-        .all() as Record<string, unknown>[];
+      const placeholders = columns.map(() => '?').join(', ');
+      const updatePairs = columns.map((c) => `${c} = excluded.${c}`).join(', ');
 
-      for (const record of unsynced) {
-        await pushRecord(spreadsheetId, table, record);
-      }
+      db.prepare(
+        `INSERT INTO ${table} (${columns.join(', ')}) VALUES (${placeholders})
+         ON CONFLICT(id) DO UPDATE SET ${updatePairs}`
+      ).run(...values);
     } catch (error) {
-      log('error', `Failed to push ${table}`, { error });
+      log('debug', `Could not upsert into ${table}`, { error, id });
     }
   }
-}
-
-async function pushRecord(
-  spreadsheetId: string,
-  table: string,
-  record: Record<string, unknown>
-): Promise<void> {
-  // This would update the specific row in Google Sheets
-  // Implementation depends on how we want to handle conflicts
-  log('debug', `Would push ${table} record`, { id: record.id });
 }
 
 function notifyRenderer(): void {
@@ -255,21 +390,36 @@ function notifyRenderer(): void {
   });
 }
 
-// Auth flow
+// Configuration
+export async function setConfig(
+  credentials: ServiceAccountCredentials,
+  spreadsheetId: string
+): Promise<void> {
+  store.set('googleCredentials', JSON.stringify(credentials));
+  store.set('spreadsheetId', spreadsheetId);
+  syncStatus.isConfigured = true;
+  cachedToken = null; // Clear token cache
+
+  log('info', 'Google Sheets configuration saved');
+
+  // Start sync
+  startPeriodicSync();
+}
+
+export function isAuthenticated(): boolean {
+  return syncStatus.isConfigured;
+}
+
+// Legacy signIn/signOut for compatibility
 export async function signIn(): Promise<void> {
-  // In production, this would open OAuth flow
-  // For now, we'll use service account credentials
-  log('info', 'Sign in requested');
+  log('info', 'Sign in - use setConfig with service account credentials');
 }
 
 export async function signOut(): Promise<void> {
   store.delete('googleCredentials');
   store.delete('spreadsheetId');
-  sheetsClient = null;
+  syncStatus.isConfigured = false;
+  cachedToken = null;
   stopSync();
   log('info', 'Signed out');
-}
-
-export function isAuthenticated(): boolean {
-  return sheetsClient !== null;
 }

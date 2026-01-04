@@ -1,0 +1,8 @@
+# Ignore debug files to stay under 12 function limit
+api/debug.ts
+api/debug2.ts
+api/debug3.ts
+api/debug4.ts
+api/debug5.ts
+api/test-crypto.ts
+api/bake-slots-minimal.ts
