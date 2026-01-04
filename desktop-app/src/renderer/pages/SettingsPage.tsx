@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 interface Settings {
   businessName: string;
@@ -23,6 +24,7 @@ interface AdminUser {
   name: string;
   is_active: number;
   is_owner: number;
+  is_developer: number;
   last_login: string | null;
   created_at: string;
 }
@@ -39,6 +41,7 @@ interface AuditEntry {
 }
 
 function SettingsPage() {
+  const navigate = useNavigate();
   const [settings, setSettings] = useState<Settings>({
     businessName: 'Covenant Acres Farmstand',
     businessEmail: '',
@@ -68,7 +71,7 @@ function SettingsPage() {
 
   // Admin users state
   const [adminUsers, setAdminUsers] = useState<AdminUser[]>([]);
-  const [currentUser, setCurrentUser] = useState<{ id: string; name: string; isOwner: boolean } | null>(null);
+  const [currentUser, setCurrentUser] = useState<{ id: string; name: string; isOwner: boolean; isDeveloper: boolean } | null>(null);
   const [showAddUser, setShowAddUser] = useState(false);
   const [newUserName, setNewUserName] = useState('');
   const [newUserPin, setNewUserPin] = useState('');
@@ -545,13 +548,18 @@ function SettingsPage() {
           )}
 
           {/* Admin Users */}
-          {activeSection === 'users' && currentUser?.isOwner && (
+          {activeSection === 'users' && (currentUser?.isDeveloper || currentUser?.isOwner) && (
             <div className="card">
               <div className="card-header">
                 <h2 className="card-title">Admin Users</h2>
-                <button className="btn btn-primary" onClick={() => setShowAddUser(true)}>
-                  Add User
-                </button>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button className="btn btn-secondary" onClick={() => navigate('/users')}>
+                    Manage Permissions
+                  </button>
+                  <button className="btn btn-primary" onClick={() => setShowAddUser(true)}>
+                    Add User
+                  </button>
+                </div>
               </div>
 
               {showAddUser && (
@@ -605,7 +613,7 @@ function SettingsPage() {
                   {adminUsers.map((user) => (
                     <tr key={user.id}>
                       <td>{user.name}</td>
-                      <td>{user.is_owner ? 'Owner' : 'Admin'}</td>
+                      <td>{user.is_developer ? 'Developer' : user.is_owner ? 'Owner' : 'Admin'}</td>
                       <td>
                         {user.last_login
                           ? new Date(user.last_login).toLocaleString()
@@ -617,7 +625,7 @@ function SettingsPage() {
                         </span>
                       </td>
                       <td>
-                        {!user.is_owner && (
+                        {!user.is_owner && !user.is_developer && (
                           <>
                             <button
                               className="btn btn-small btn-secondary"
@@ -634,7 +642,7 @@ function SettingsPage() {
                             </button>
                           </>
                         )}
-                        {user.is_owner && <span style={{ color: '#666' }}>—</span>}
+                        {(user.is_owner || user.is_developer) && <span style={{ color: '#666' }}>—</span>}
                       </td>
                     </tr>
                   ))}

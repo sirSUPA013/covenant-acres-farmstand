@@ -268,6 +268,53 @@ export async function initDatabase(): Promise<void> {
     log('info', 'Added is_developer column to admin_users');
   }
 
+  // Migrations for recipes table
+  const recipeColumns = db.prepare("PRAGMA table_info(recipes)").all() as Array<{ name: string }>;
+
+  if (!recipeColumns.some(col => col.name === 'prep_time_minutes')) {
+    db.exec("ALTER TABLE recipes ADD COLUMN prep_time_minutes INTEGER");
+    log('info', 'Added prep_time_minutes column to recipes');
+  }
+
+  if (!recipeColumns.some(col => col.name === 'bake_time_minutes')) {
+    db.exec("ALTER TABLE recipes ADD COLUMN bake_time_minutes INTEGER");
+    log('info', 'Added bake_time_minutes column to recipes');
+  }
+
+  if (!recipeColumns.some(col => col.name === 'bake_temp')) {
+    db.exec("ALTER TABLE recipes ADD COLUMN bake_temp TEXT");
+    log('info', 'Added bake_temp column to recipes');
+  }
+
+  if (!recipeColumns.some(col => col.name === 'prep_instructions')) {
+    db.exec("ALTER TABLE recipes ADD COLUMN prep_instructions TEXT");
+    log('info', 'Added prep_instructions column to recipes');
+  }
+
+  if (!recipeColumns.some(col => col.name === 'bake_instructions')) {
+    db.exec("ALTER TABLE recipes ADD COLUMN bake_instructions TEXT");
+    log('info', 'Added bake_instructions column to recipes');
+  }
+
+  // Create blank recipes for flavors that don't have one
+  const flavorsWithoutRecipes = db.prepare(`
+    SELECT id, name FROM flavors WHERE recipe_id IS NULL OR recipe_id = ''
+  `).all() as Array<{ id: string; name: string }>;
+
+  for (const flavor of flavorsWithoutRecipes) {
+    const recipeId = `rec-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+    const now = new Date().toISOString();
+
+    db.prepare(`
+      INSERT INTO recipes (id, name, flavor_id, base_ingredients, fold_ingredients, lamination_ingredients, steps, yields_loaves, created_at, updated_at)
+      VALUES (?, ?, ?, '[]', '[]', '[]', '[]', 1, ?, ?)
+    `).run(recipeId, `${flavor.name} Recipe`, flavor.id, now, now);
+
+    db.prepare(`UPDATE flavors SET recipe_id = ? WHERE id = ?`).run(recipeId, flavor.id);
+
+    log('info', 'Created blank recipe for flavor', { flavorId: flavor.id, recipeId });
+  }
+
   log('info', 'Database tables created/verified');
 }
 

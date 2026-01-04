@@ -31,6 +31,11 @@ interface Recipe {
   season: string;
   source: string;
   updated_at: string;
+  prep_time_minutes: number;
+  bake_time_minutes: number;
+  bake_temp: string;
+  prep_instructions: string;
+  bake_instructions: string;
 }
 
 function RecipesPage() {
@@ -45,6 +50,9 @@ function RecipesPage() {
   const [editYield, setEditYield] = useState(1);
   const [editPrepTime, setEditPrepTime] = useState(0);
   const [editBakeTime, setEditBakeTime] = useState(0);
+  const [editBakeTemp, setEditBakeTemp] = useState('');
+  const [editPrepInstructions, setEditPrepInstructions] = useState('');
+  const [editBakeInstructions, setEditBakeInstructions] = useState('');
   const [editNotes, setEditNotes] = useState('');
 
   useEffect(() => {
@@ -77,8 +85,11 @@ function RecipesPage() {
       setEditSteps([]);
     }
     setEditYield(recipe.yields_loaves || 1);
-    setEditPrepTime(0); // Not in current schema
-    setEditBakeTime(0); // Not in current schema
+    setEditPrepTime(recipe.prep_time_minutes || 0);
+    setEditBakeTime(recipe.bake_time_minutes || 0);
+    setEditBakeTemp(recipe.bake_temp || '');
+    setEditPrepInstructions(recipe.prep_instructions || '');
+    setEditBakeInstructions(recipe.bake_instructions || '');
     setEditNotes(recipe.notes || '');
   }
 
@@ -91,11 +102,14 @@ function RecipesPage() {
 
     try {
       await window.api.updateRecipe(selectedRecipe.id, {
-        ingredients: JSON.stringify(editIngredients),
-        steps: JSON.stringify(editSteps),
-        yieldLoaves: editYield,
+        baseIngredients: editIngredients,
+        steps: editSteps,
+        yieldsLoaves: editYield,
         prepTimeMinutes: editPrepTime,
         bakeTimeMinutes: editBakeTime,
+        bakeTemp: editBakeTemp,
+        prepInstructions: editPrepInstructions,
+        bakeInstructions: editBakeInstructions,
         notes: editNotes,
       });
       setEditMode(false);
@@ -246,6 +260,30 @@ function RecipesPage() {
                     )}
                   </div>
 
+                  {/* Time & Temperature */}
+                  {(selectedRecipe.prep_time_minutes || selectedRecipe.bake_time_minutes || selectedRecipe.bake_temp) && (
+                    <div className="form-row">
+                      {selectedRecipe.prep_time_minutes > 0 && (
+                        <div className="form-group">
+                          <label className="form-label">Prep Time</label>
+                          <p>{selectedRecipe.prep_time_minutes} min</p>
+                        </div>
+                      )}
+                      {selectedRecipe.bake_time_minutes > 0 && (
+                        <div className="form-group">
+                          <label className="form-label">Bake Time</label>
+                          <p>{selectedRecipe.bake_time_minutes} min</p>
+                        </div>
+                      )}
+                      {selectedRecipe.bake_temp && (
+                        <div className="form-group">
+                          <label className="form-label">Bake Temperature</label>
+                          <p>{selectedRecipe.bake_temp}</p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {/* Base Ingredients */}
                   {parseIngredients(selectedRecipe.base_ingredients).length > 0 && (
                     <div className="form-group">
@@ -330,20 +368,39 @@ function RecipesPage() {
                     </div>
                   )}
 
-                  <div className="form-group">
-                    <label className="form-label">Instructions</label>
-                    <ol className="recipe-steps">
-                      {parseSteps(selectedRecipe.steps).map((step) => (
-                        <li key={step.order}>
-                          {step.instruction}
-                          {step.duration_minutes ? (
-                            <span className="step-time"> ({step.duration_minutes} min)</span>
-                          ) : null}
-                          {step.notes && <div className="step-notes">{step.notes}</div>}
-                        </li>
-                      ))}
-                    </ol>
-                  </div>
+                  {/* Preparation Instructions */}
+                  {selectedRecipe.prep_instructions && (
+                    <div className="form-group">
+                      <label className="form-label">Preparation Instructions</label>
+                      <div className="instructions-text">{selectedRecipe.prep_instructions}</div>
+                    </div>
+                  )}
+
+                  {/* Baking Instructions */}
+                  {selectedRecipe.bake_instructions && (
+                    <div className="form-group">
+                      <label className="form-label">Baking Instructions</label>
+                      <div className="instructions-text">{selectedRecipe.bake_instructions}</div>
+                    </div>
+                  )}
+
+                  {/* Step-by-step Process */}
+                  {parseSteps(selectedRecipe.steps).length > 0 && (
+                    <div className="form-group">
+                      <label className="form-label">Step-by-Step Process</label>
+                      <ol className="recipe-steps">
+                        {parseSteps(selectedRecipe.steps).map((step) => (
+                          <li key={step.order}>
+                            {step.instruction}
+                            {step.duration_minutes ? (
+                              <span className="step-time"> ({step.duration_minutes} min)</span>
+                            ) : null}
+                            {step.notes && <div className="step-notes">{step.notes}</div>}
+                          </li>
+                        ))}
+                      </ol>
+                    </div>
+                  )}
 
                   {selectedRecipe.notes && (
                     <div className="form-group">
@@ -384,6 +441,16 @@ function RecipesPage() {
                         value={editBakeTime}
                         onChange={(e) => setEditBakeTime(parseInt(e.target.value))}
                         min="0"
+                      />
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Bake Temp</label>
+                      <input
+                        type="text"
+                        className="form-input"
+                        value={editBakeTemp}
+                        onChange={(e) => setEditBakeTemp(e.target.value)}
+                        placeholder="e.g., 375°F"
                       />
                     </div>
                   </div>
@@ -454,8 +521,30 @@ function RecipesPage() {
                   </div>
 
                   <div className="form-group">
+                    <label className="form-label">Preparation Instructions</label>
+                    <textarea
+                      className="form-textarea"
+                      value={editPrepInstructions}
+                      onChange={(e) => setEditPrepInstructions(e.target.value)}
+                      rows={4}
+                      placeholder="Enter preparation instructions (mixing, shaping, proofing, etc.)"
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label">Baking Instructions</label>
+                    <textarea
+                      className="form-textarea"
+                      value={editBakeInstructions}
+                      onChange={(e) => setEditBakeInstructions(e.target.value)}
+                      rows={4}
+                      placeholder="Enter baking instructions (oven temps, timing, cooling, etc.)"
+                    />
+                  </div>
+
+                  <div className="form-group">
                     <label className="form-label">
-                      Instructions
+                      Step-by-Step Process
                       <button
                         className="btn btn-small btn-secondary"
                         onClick={addStep}
@@ -597,6 +686,13 @@ function RecipesPage() {
           color: var(--primary-green);
           min-width: 24px;
           padding-top: 8px;
+        }
+        .instructions-text {
+          white-space: pre-wrap;
+          background: var(--light-gray);
+          padding: 12px;
+          border-radius: 6px;
+          line-height: 1.6;
         }
       `}</style>
     </div>

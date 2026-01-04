@@ -223,26 +223,46 @@ export function setupIpcHandlers(): void {
 
   ipcMain.handle('flavors:create', async (_event, data) => {
     const db = getDb();
-    const id = `flav-${Date.now().toString(36)}`;
+    const flavorId = `flav-${Date.now().toString(36)}`;
+    const recipeId = `rec-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
     const now = new Date().toISOString();
 
+    // Create the blank recipe first
     db.prepare(
-      `INSERT INTO flavors (id, name, description, sizes, is_active, season, sort_order, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO recipes (id, name, flavor_id, base_ingredients, fold_ingredients, lamination_ingredients, steps, yields_loaves, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
-      id,
+      recipeId,
+      `${data.name} Recipe`,
+      flavorId,
+      '[]',
+      '[]',
+      '[]',
+      '[]',
+      1,
+      now,
+      now
+    );
+
+    // Create the flavor with recipe_id
+    db.prepare(
+      `INSERT INTO flavors (id, name, description, sizes, recipe_id, is_active, season, sort_order, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      flavorId,
       data.name,
       data.description || '',
-      JSON.stringify(data.sizes),
-      data.isActive ? 1 : 0,
+      JSON.stringify(data.sizes || [{ name: 'Regular', price: 10 }]),
+      recipeId,
+      data.isActive !== false ? 1 : 0,
       data.season || 'year_round',
       data.sortOrder || 0,
       now,
       now
     );
 
-    log('info', 'Flavor created', { id, name: data.name });
-    return id;
+    log('info', 'Flavor created with recipe', { flavorId, recipeId, name: data.name });
+    return { id: flavorId, recipeId };
   });
 
   ipcMain.handle('flavors:update', async (_event, id, data) => {
@@ -270,10 +290,26 @@ export function setupIpcHandlers(): void {
     log('info', 'Flavor updated', { id });
   });
 
+  ipcMain.handle('flavors:get', async (_event, id) => {
+    const db = getDb();
+    return db.prepare('SELECT * FROM flavors WHERE id = ?').get(id);
+  });
+
   ipcMain.handle('flavors:delete', async (_event, id) => {
     const db = getDb();
+    // Get the flavor to find its recipe_id
+    const flavor = db.prepare('SELECT recipe_id FROM flavors WHERE id = ?').get(id) as { recipe_id: string } | undefined;
+
+    // Delete the flavor
     db.prepare('DELETE FROM flavors WHERE id = ?').run(id);
-    log('info', 'Flavor deleted', { id });
+
+    // Delete the associated recipe if it exists
+    if (flavor?.recipe_id) {
+      db.prepare('DELETE FROM recipes WHERE id = ?').run(flavor.recipe_id);
+      log('info', 'Flavor and recipe deleted', { flavorId: id, recipeId: flavor.recipe_id });
+    } else {
+      log('info', 'Flavor deleted', { id });
+    }
   });
 
   // Locations
