@@ -1,7 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
 
+interface AdminUser {
+  id: string;
+  name: string;
+  role: 'developer' | 'owner' | 'admin';
+  isDeveloper: boolean;
+  isOwner: boolean;
+}
+
 interface LockScreenProps {
-  onUnlock: (user: { id: string; name: string; isOwner: boolean }) => void;
+  onUnlock: (user: AdminUser) => void;
 }
 
 function LockScreen({ onUnlock }: LockScreenProps) {
@@ -9,6 +17,8 @@ function LockScreen({ onUnlock }: LockScreenProps) {
   const [pin, setPin] = useState('');
   const [name, setName] = useState('');
   const [confirmPin, setConfirmPin] = useState('');
+  const [secret, setSecret] = useState('');
+  const [showDevSetup, setShowDevSetup] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const pinInputRef = useRef<HTMLInputElement>(null);
@@ -43,7 +53,7 @@ function LockScreen({ onUnlock }: LockScreenProps) {
     setLoading(false);
 
     if (result.success && result.user) {
-      onUnlock(result.user as { id: string; name: string; isOwner: boolean });
+      onUnlock(result.user as AdminUser);
     } else {
       setError(result.error || 'Invalid PIN');
       setPin('');
@@ -70,11 +80,25 @@ function LockScreen({ onUnlock }: LockScreenProps) {
     setLoading(true);
     setError('');
 
+    // If developer setup mode and secret provided, try developer setup
+    if (showDevSetup && secret) {
+      const result = await window.api.setupDeveloper(name.trim(), pin, secret);
+      setLoading(false);
+
+      if (result.success && result.user) {
+        onUnlock(result.user as AdminUser);
+      } else {
+        setError(result.error || 'Developer setup failed');
+      }
+      return;
+    }
+
+    // Regular owner setup
     const result = await window.api.setupOwner(name.trim(), pin);
     setLoading(false);
 
     if (result.success && result.user) {
-      onUnlock(result.user as { id: string; name: string; isOwner: boolean });
+      onUnlock(result.user as AdminUser);
     } else {
       setError('Setup failed. Please try again.');
     }
@@ -106,7 +130,9 @@ function LockScreen({ onUnlock }: LockScreenProps) {
 
         {needsSetup ? (
           <form onSubmit={handleSetup} className="lock-form">
-            <p className="setup-message">Welcome! Set up your admin account.</p>
+            <p className="setup-message">
+              Welcome! Set up your {showDevSetup ? 'developer' : 'admin'} account.
+            </p>
 
             <div className="form-group">
               <label className="form-label">Your Name</label>
@@ -144,10 +170,35 @@ function LockScreen({ onUnlock }: LockScreenProps) {
               />
             </div>
 
+            {showDevSetup && (
+              <div className="form-group">
+                <label className="form-label">Developer Secret</label>
+                <input
+                  type="password"
+                  className="form-input"
+                  value={secret}
+                  onChange={(e) => setSecret(e.target.value)}
+                  placeholder="Enter developer secret"
+                />
+              </div>
+            )}
+
             {error && <div className="lock-error">{error}</div>}
 
             <button type="submit" className="btn btn-primary lock-btn" disabled={loading}>
-              {loading ? 'Setting up...' : 'Create Account'}
+              {loading ? 'Setting up...' : showDevSetup ? 'Create Developer Account' : 'Create Account'}
+            </button>
+
+            <button
+              type="button"
+              className="dev-toggle"
+              onClick={() => {
+                setShowDevSetup(!showDevSetup);
+                setSecret('');
+                setError('');
+              }}
+            >
+              {showDevSetup ? 'Standard Setup' : 'Developer Setup'}
             </button>
           </form>
         ) : (

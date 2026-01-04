@@ -84,12 +84,15 @@ contextBridge.exposeInMainWorld('api', {
 
   // Admin Auth
   checkAdminSetup: () => ipcRenderer.invoke('admin:checkSetup'),
+  setupDeveloper: (name: string, pin: string, secret: string) =>
+    ipcRenderer.invoke('admin:setupDeveloper', name, pin, secret),
   setupOwner: (name: string, pin: string) => ipcRenderer.invoke('admin:setupOwner', name, pin),
   adminLogin: (pin: string) => ipcRenderer.invoke('admin:login', pin),
   adminLogout: () => ipcRenderer.invoke('admin:logout'),
   getCurrentUser: () => ipcRenderer.invoke('admin:getCurrentUser'),
   getAdminUsers: () => ipcRenderer.invoke('admin:getUsers'),
-  createAdminUser: (name: string, pin: string) => ipcRenderer.invoke('admin:createUser', name, pin),
+  createAdminUser: (data: { name: string; pin: string; role: string; permissions?: object }) =>
+    ipcRenderer.invoke('admin:createUser', data),
   updateAdminUser: (id: string, data: object) => ipcRenderer.invoke('admin:updateUser', id, data),
   deleteAdminUser: (id: string) => ipcRenderer.invoke('admin:deleteUser', id),
 
@@ -179,12 +182,22 @@ declare global {
       configureGoogleSheets: (credentials: object, spreadsheetId: string) => Promise<{ success: boolean; error?: string }>;
 
       checkAdminSetup: () => Promise<{ needsSetup: boolean }>;
+      setupDeveloper: (name: string, pin: string, secret: string) =>
+        Promise<{ success: boolean; user?: object; error?: string }>;
       setupOwner: (name: string, pin: string) => Promise<{ success: boolean; user?: object }>;
       adminLogin: (pin: string) => Promise<{ success: boolean; user?: object; error?: string }>;
       adminLogout: () => Promise<{ success: boolean }>;
-      getCurrentUser: () => Promise<{ id: string; name: string; isOwner: boolean } | null>;
+      getCurrentUser: () => Promise<{
+        id: string;
+        name: string;
+        role: string;
+        isDeveloper: boolean;
+        isOwner: boolean;
+        permissions: object;
+      } | null>;
       getAdminUsers: () => Promise<unknown[]>;
-      createAdminUser: (name: string, pin: string) => Promise<{ success: boolean; id?: string; error?: string }>;
+      createAdminUser: (data: { name: string; pin: string; role: string; permissions?: object }) =>
+        Promise<{ success: boolean; id?: string; error?: string }>;
       updateAdminUser: (id: string, data: object) => Promise<{ success: boolean; error?: string }>;
       deleteAdminUser: (id: string) => Promise<{ success: boolean; error?: string }>;
 

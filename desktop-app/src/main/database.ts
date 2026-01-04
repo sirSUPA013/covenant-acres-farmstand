@@ -223,7 +223,9 @@ export async function initDatabase(): Promise<void> {
       name TEXT NOT NULL,
       pin_hash TEXT NOT NULL,
       is_active INTEGER DEFAULT 1,
+      is_developer INTEGER DEFAULT 0,
       is_owner INTEGER DEFAULT 0,
+      permissions TEXT,
       last_login TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
@@ -250,6 +252,21 @@ export async function initDatabase(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_audit_log_user ON audit_log(user_id);
     CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at);
   `);
+
+  // Migrations for admin_users table
+  const columns = db.prepare("PRAGMA table_info(admin_users)").all() as Array<{ name: string }>;
+
+  // Add permissions column if missing
+  if (!columns.some(col => col.name === 'permissions')) {
+    db.exec("ALTER TABLE admin_users ADD COLUMN permissions TEXT");
+    log('info', 'Added permissions column to admin_users');
+  }
+
+  // Add is_developer column if missing
+  if (!columns.some(col => col.name === 'is_developer')) {
+    db.exec("ALTER TABLE admin_users ADD COLUMN is_developer INTEGER DEFAULT 0");
+    log('info', 'Added is_developer column to admin_users');
+  }
 
   log('info', 'Database tables created/verified');
 }

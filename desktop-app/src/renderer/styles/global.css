@@ -635,3 +635,150 @@ body {
 .logout-btn:hover {
   color: var(--white);
 }
+
+/* ============================================
+   Users Page
+   ============================================ */
+
+.users-page {
+  padding: var(--spacing-lg);
+}
+
+/* Role Badges */
+.badge-developer {
+  background: linear-gradient(135deg, #7c3aed, #5b21b6);
+  color: white;
+}
+
+.badge-owner {
+  background: linear-gradient(135deg, var(--accent-green), var(--primary-green));
+  color: white;
+}
+
+.badge-admin {
+  background: var(--medium-gray);
+  color: var(--text-gray);
+}
+
+.badge-you {
+  background: var(--info);
+  color: white;
+  font-size: 0.65rem;
+  margin-left: 8px;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+/* Status Badges */
+.status-badge {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+.status-active {
+  background: rgba(76, 175, 80, 0.15);
+  color: #388e3c;
+}
+
+.status-inactive {
+  background: rgba(158, 158, 158, 0.15);
+  color: #757575;
+}
+
+.inactive-row {
+  opacity: 0.6;
+}
+
+/* Action Buttons */
+.action-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.btn-small {
+  padding: 4px 10px;
+  font-size: 0.8rem;
+}
+
+.btn-danger {
+  background: var(--error);
+  color: white;
+  border-color: var(--error);
+}
+
+.btn-danger:hover {
+  background: #b71c1c;
+  border-color: #b71c1c;
+}
+
+/* Permissions Grid */
+.permissions-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 12px;
+  background: var(--light-gray);
+  border-radius: 8px;
+}
+
+.permission-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--medium-gray);
+}
+
+.permission-row:last-child {
+  border-bottom: none;
+}
+
+.permission-label {
+  font-weight: 500;
+  color: var(--text-gray);
+}
+
+.permission-buttons {
+  display: flex;
+  gap: 4px;
+}
+
+.perm-btn {
+  padding: 4px 10px;
+  border: 1px solid var(--medium-gray);
+  background: var(--white);
+  border-radius: 4px;
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.perm-btn:hover {
+  background: var(--light-gray);
+}
+
+.perm-btn.active {
+  background: var(--primary-green);
+  color: white;
+  border-color: var(--primary-green);
+}
+
+/* Developer Toggle Button */
+.dev-toggle {
+  background: none;
+  border: none;
+  color: var(--text-gray);
+  font-size: 0.8rem;
+  cursor: pointer;
+  margin-top: 12px;
+  opacity: 0.6;
+  transition: opacity 0.15s;
+}
+
+.dev-toggle:hover {
+  opacity: 1;
+}

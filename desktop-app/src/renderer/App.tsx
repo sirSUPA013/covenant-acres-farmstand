@@ -12,6 +12,7 @@ import RecipesPage from './pages/RecipesPage';
 import PrepSheetPage from './pages/PrepSheetPage';
 import AnalyticsPage from './pages/AnalyticsPage';
 import SettingsPage from './pages/SettingsPage';
+import UsersPage from './pages/UsersPage';
 
 interface SyncStatus {
   isOnline: boolean;
@@ -23,6 +24,8 @@ interface SyncStatus {
 interface AdminUser {
   id: string;
   name: string;
+  role: 'developer' | 'owner' | 'admin';
+  isDeveloper: boolean;
   isOwner: boolean;
 }
 
@@ -74,7 +77,16 @@ function App() {
     { path: '/recipes', label: 'Recipes', icon: '📖' },
     { path: '/prep', label: 'Prep Sheet', icon: '📝' },
     { path: '/analytics', label: 'Analytics', icon: '📊' },
+    { path: '/users', label: 'Users', icon: '👤', requiresOwner: true },
   ];
+
+  // Filter nav items based on permissions
+  const visibleNavItems = navItems.filter((item) => {
+    if (item.requiresOwner) {
+      return currentUser?.isDeveloper || currentUser?.isOwner;
+    }
+    return true;
+  });
 
   return (
     <div className="app">
@@ -85,7 +97,7 @@ function App() {
         </div>
 
         <nav className="sidebar-nav">
-          {navItems.map((item) => (
+          {visibleNavItems.map((item) => (
             <NavLink
               key={item.path}
               to={item.path}
@@ -105,7 +117,9 @@ function App() {
               </div>
               <div className="user-info">
                 <div className="user-name">{currentUser.name}</div>
-                <div className="user-role">{currentUser.isOwner ? 'Owner' : 'Admin'}</div>
+                <div className="user-role">
+                  {currentUser.isDeveloper ? 'Developer' : currentUser.isOwner ? 'Owner' : 'Admin'}
+                </div>
               </div>
               <button className="logout-btn" onClick={handleLogout} title="Lock">
                 🔒
@@ -143,6 +157,7 @@ function App() {
           <Route path="/recipes" element={<RecipesPage />} />
           <Route path="/prep" element={<PrepSheetPage />} />
           <Route path="/analytics" element={<AnalyticsPage />} />
+          <Route path="/users" element={<UsersPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Routes>
       </main>

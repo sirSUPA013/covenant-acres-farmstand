@@ -8,6 +8,7 @@ import crypto from 'crypto';
 import { getDb } from './database';
 import { syncAll, getSyncStatus, signIn, signOut, isAuthenticated, setConfig } from './sheets-sync';
 import { log, createErrorReport, getLogPath } from './logger';
+import { UserPermissions, UserRole, parsePermissions, getUserRole, FULL_PERMISSIONS, DEFAULT_PERMISSIONS } from '../shared/permissions';
 
 // Simple hash function for PINs
 function hashPin(pin: string): string {
@@ -15,7 +16,14 @@ function hashPin(pin: string): string {
 }
 
 // Current logged-in user (in-memory session)
-let currentUser: { id: string; name: string; isOwner: boolean } | null = null;
+let currentUser: {
+  id: string;
+  name: string;
+  role: UserRole;
+  isDeveloper: boolean;
+  isOwner: boolean;
+  permissions: UserPermissions;
+} | null = null;
 
 export function getCurrentUser() {
   return currentUser;
@@ -717,17 +725,47 @@ export function setupIpcHandlers(): void {
     return { needsSetup: count.count === 0 };
   });
 
+  // Setup developer account - only works if no developers exist
+  ipcMain.handle('admin:setupDeveloper', async (_event, name: string, pin: string, secret: string) => {
+    // Require a secret key to prevent unauthorized developer creation
+    if (secret !== 'covenant-dev-2026') {
+      return { success: false, error: 'Invalid secret' };
+    }
+
+    const db = getDb();
+
+    // Check if any developers already exist
+    const devCount = db.prepare('SELECT COUNT(*) as count FROM admin_users WHERE is_developer = 1').get() as { count: number };
+    if (devCount.count > 0) {
+      return { success: false, error: 'Developer account already exists' };
+    }
+
+    const id = `admin-${Date.now().toString(36)}`;
+    const now = new Date().toISOString();
+
+    db.prepare(`
+      INSERT INTO admin_users (id, name, pin_hash, is_active, is_developer, is_owner, created_at, updated_at)
+      VALUES (?, ?, ?, 1, 1, 1, ?, ?)
+    `).run(id, name, hashPin(pin), now, now);
+
+    currentUser = { id, name, role: 'developer', isDeveloper: true, isOwner: true, permissions: FULL_PERMISSIONS };
+    logAudit('DEVELOPER_SETUP', 'admin_users', id, `Developer account created: ${name}`);
+    log('info', 'Developer account created', { id, name });
+
+    return { success: true, user: currentUser };
+  });
+
   ipcMain.handle('admin:setupOwner', async (_event, name: string, pin: string) => {
     const db = getDb();
     const id = `admin-${Date.now().toString(36)}`;
     const now = new Date().toISOString();
 
     db.prepare(`
-      INSERT INTO admin_users (id, name, pin_hash, is_active, is_owner, created_at, updated_at)
-      VALUES (?, ?, ?, 1, 1, ?, ?)
+      INSERT INTO admin_users (id, name, pin_hash, is_active, is_developer, is_owner, created_at, updated_at)
+      VALUES (?, ?, ?, 1, 0, 1, ?, ?)
     `).run(id, name, hashPin(pin), now, now);
 
-    currentUser = { id, name, isOwner: true };
+    currentUser = { id, name, role: 'owner', isDeveloper: false, isOwner: true, permissions: FULL_PERMISSIONS };
     logAudit('OWNER_SETUP', 'admin_users', id, `Owner account created: ${name}`);
     log('info', 'Owner account created', { id, name });
 
@@ -739,9 +777,9 @@ export function setupIpcHandlers(): void {
     const pinHash = hashPin(pin);
 
     const user = db.prepare(`
-      SELECT id, name, is_owner FROM admin_users
+      SELECT id, name, is_developer, is_owner, permissions FROM admin_users
       WHERE pin_hash = ? AND is_active = 1
-    `).get(pinHash) as { id: string; name: string; is_owner: number } | undefined;
+    `).get(pinHash) as { id: string; name: string; is_developer: number; is_owner: number; permissions: string | null } | undefined;
 
     if (!user) {
       logAudit('LOGIN_FAILED', 'admin_users', null, 'Invalid PIN attempt');
@@ -752,9 +790,13 @@ export function setupIpcHandlers(): void {
     db.prepare('UPDATE admin_users SET last_login = ? WHERE id = ?')
       .run(new Date().toISOString(), user.id);
 
-    currentUser = { id: user.id, name: user.name, isOwner: user.is_owner === 1 };
-    logAudit('LOGIN', 'admin_users', user.id, `User logged in: ${user.name}`);
-    log('info', 'Admin login', { id: user.id, name: user.name });
+    const isDeveloper = user.is_developer === 1;
+    const isOwner = user.is_owner === 1;
+    const role = getUserRole(isDeveloper, isOwner);
+    const permissions = parsePermissions(user.permissions, role);
+    currentUser = { id: user.id, name: user.name, role, isDeveloper, isOwner, permissions };
+    logAudit('LOGIN', 'admin_users', user.id, `User logged in: ${user.name} (${role})`);
+    log('info', 'Admin login', { id: user.id, name: user.name, role });
 
     return { success: true, user: currentUser };
   });
@@ -774,37 +816,82 @@ export function setupIpcHandlers(): void {
   ipcMain.handle('admin:getUsers', async () => {
     const db = getDb();
     return db.prepare(`
-      SELECT id, name, is_active, is_owner, last_login, created_at
-      FROM admin_users ORDER BY is_owner DESC, name
+      SELECT id, name, is_active, is_developer, is_owner, permissions, last_login, created_at
+      FROM admin_users ORDER BY is_developer DESC, is_owner DESC, name
     `).all();
   });
 
-  ipcMain.handle('admin:createUser', async (_event, name: string, pin: string) => {
-    if (!currentUser?.isOwner) {
-      return { success: false, error: 'Only owners can create users' };
+  ipcMain.handle('admin:createUser', async (_event, data: {
+    name: string;
+    pin: string;
+    role: 'owner' | 'admin';
+    permissions?: UserPermissions;
+  }) => {
+    // Only developers and owners can create users
+    if (!currentUser?.isDeveloper && !currentUser?.isOwner) {
+      return { success: false, error: 'Only developers and owners can create users' };
+    }
+
+    // Only developers can create owners
+    if (data.role === 'owner' && !currentUser?.isDeveloper) {
+      return { success: false, error: 'Only developers can create owner accounts' };
     }
 
     const db = getDb();
     const id = `admin-${Date.now().toString(36)}`;
     const now = new Date().toISOString();
+    const isOwner = data.role === 'owner' ? 1 : 0;
+    const permissionsJson = data.permissions ? JSON.stringify(data.permissions) : null;
 
     db.prepare(`
-      INSERT INTO admin_users (id, name, pin_hash, is_active, is_owner, created_at, updated_at)
-      VALUES (?, ?, ?, 1, 0, ?, ?)
-    `).run(id, name, hashPin(pin), now, now);
+      INSERT INTO admin_users (id, name, pin_hash, is_active, is_developer, is_owner, permissions, created_at, updated_at)
+      VALUES (?, ?, ?, 1, 0, ?, ?, ?, ?)
+    `).run(id, data.name, hashPin(data.pin), isOwner, permissionsJson, now, now);
 
-    logAudit('USER_CREATED', 'admin_users', id, `Admin user created: ${name}`);
-    log('info', 'Admin user created', { id, name });
+    logAudit('USER_CREATED', 'admin_users', id, `User created: ${data.name} (${data.role})`);
+    log('info', 'Admin user created', { id, name: data.name, role: data.role });
 
     return { success: true, id };
   });
 
-  ipcMain.handle('admin:updateUser', async (_event, id: string, data: { name?: string; pin?: string; isActive?: boolean }) => {
-    if (!currentUser?.isOwner && currentUser?.id !== id) {
+  ipcMain.handle('admin:updateUser', async (_event, id: string, data: {
+    name?: string;
+    pin?: string;
+    isActive?: boolean;
+    isOwner?: boolean;
+    permissions?: UserPermissions;
+  }) => {
+    // Check permissions
+    const isEditingSelf = currentUser?.id === id;
+    const canEdit = currentUser?.isDeveloper || currentUser?.isOwner || isEditingSelf;
+    if (!canEdit) {
       return { success: false, error: 'Permission denied' };
     }
 
+    // Get the target user to check their role
     const db = getDb();
+    const targetUser = db.prepare('SELECT is_developer, is_owner FROM admin_users WHERE id = ?')
+      .get(id) as { is_developer: number; is_owner: number } | undefined;
+
+    if (!targetUser) {
+      return { success: false, error: 'User not found' };
+    }
+
+    // Only developers can edit developer or owner accounts (except themselves)
+    if ((targetUser.is_developer || targetUser.is_owner) && !currentUser?.isDeveloper && !isEditingSelf) {
+      return { success: false, error: 'Only developers can edit owner accounts' };
+    }
+
+    // Only developers can change owner status
+    if (typeof data.isOwner === 'boolean' && !currentUser?.isDeveloper) {
+      return { success: false, error: 'Only developers can change owner status' };
+    }
+
+    // Only developers and owners can change permissions
+    if (data.permissions && !currentUser?.isDeveloper && !currentUser?.isOwner) {
+      return { success: false, error: 'Only developers and owners can change permissions' };
+    }
+
     const updates: string[] = [];
     const values: unknown[] = [];
 
@@ -819,6 +906,14 @@ export function setupIpcHandlers(): void {
     if (typeof data.isActive === 'boolean') {
       updates.push('is_active = ?');
       values.push(data.isActive ? 1 : 0);
+    }
+    if (typeof data.isOwner === 'boolean') {
+      updates.push('is_owner = ?');
+      values.push(data.isOwner ? 1 : 0);
+    }
+    if (data.permissions) {
+      updates.push('permissions = ?');
+      values.push(JSON.stringify(data.permissions));
     }
 
     if (updates.length === 0) return { success: true };
