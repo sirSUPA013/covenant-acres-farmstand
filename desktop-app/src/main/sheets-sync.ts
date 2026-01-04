@@ -297,6 +297,11 @@ function updateLocalTable(table: string, headers: string[], rows: string[][]): v
   const db = getDb();
   const now = new Date().toISOString();
 
+  // Columns to skip during sync (foreign keys to tables not synced from Sheets)
+  const skipColumns: Record<string, Set<string>> = {
+    flavors: new Set(['recipe_id']), // recipes table not synced from Sheets
+  };
+
   // Map sheet column headers to database column names
   const columnMap: Record<string, string> = {
     // Common mappings
@@ -355,6 +360,10 @@ function updateLocalTable(table: string, headers: string[], rows: string[][]): v
 
     headers.forEach((header, index) => {
       const dbColumn = columnMap[header.toLowerCase()] || header.toLowerCase();
+      // Skip columns that reference tables not synced from Sheets
+      if (skipColumns[table]?.has(dbColumn)) {
+        return;
+      }
       if (dbColumns.has(dbColumn)) {
         columns.push(dbColumn);
         values.push(row[index] || null);
