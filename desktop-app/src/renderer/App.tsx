@@ -55,7 +55,7 @@ function App() {
       {/* Sidebar */}
       <aside className="sidebar">
         <div className="sidebar-header">
-          <h1 className="app-title">Covenant Acres</h1>
+          <img src="./assets/logo.jpg" alt="Covenant Acres" className="app-logo" />
           <p className="app-subtitle">Farmstand</p>
         </div>
 
