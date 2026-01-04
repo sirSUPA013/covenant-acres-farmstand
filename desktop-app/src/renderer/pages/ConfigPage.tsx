@@ -817,8 +817,21 @@ function ConfigPage() {
                   </div>
                   <div style={{ fontSize: '0.8rem', color: '#888', marginTop: '4px', lineHeight: '1.4' }}>
                     <strong>Includes:</strong> Electricity (oven), propane/gas, paper towels, cleaning supplies<br />
-                    <strong>How to calculate:</strong> Estimate monthly costs for baking-related utilities, divide by loaves baked that month. Example: $30/month ÷ 100 loaves = $0.30/loaf
+                    <strong>How to calculate:</strong> Estimate monthly costs for baking-related utilities, divide by loaves baked that month.
                   </div>
+                  <details style={{ fontSize: '0.8rem', color: '#666', marginTop: '8px', cursor: 'pointer' }}>
+                    <summary style={{ color: '#8B7355', fontWeight: '500' }}>See example calculation (propane oven)</summary>
+                    <div style={{ marginTop: '8px', padding: '12px', backgroundColor: '#f9f9f9', borderRadius: '4px', lineHeight: '1.5' }}>
+                      <strong>Propane usage estimate:</strong><br />
+                      • Standard oven: ~35,000 BTU/hr<br />
+                      • 4 hours at 450°F (45% duty cycle): ~63,000 BTUs<br />
+                      • Propane: 91,500 BTUs/gallon → <strong>0.69 gal/bake day</strong><br /><br />
+                      <strong>Cost per loaf (Indiana bulk propane ~$2.25/gal):</strong><br />
+                      • 0.69 gal × $2.25 = $1.55/bake day<br />
+                      • 18-24 loaves → <strong>$0.06-0.09/loaf</strong> for propane<br /><br />
+                      <em>Add ~$0.03 for electricity, paper towels, cleaning supplies → $0.10-0.12 total is reasonable.</em>
+                    </div>
+                  </details>
                 </div>
 
                 <div style={{ borderTop: '1px solid #e0e0e0', paddingTop: '16px', marginTop: '20px' }}>
