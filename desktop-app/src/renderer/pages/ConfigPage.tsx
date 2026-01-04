@@ -776,7 +776,7 @@ function ConfigPage() {
                 <h2 className="card-title">Cost Settings</h2>
               </div>
 
-              <div style={{ padding: '20px', maxWidth: '400px' }}>
+              <div style={{ padding: '20px', maxWidth: '500px' }}>
                 <p style={{ marginBottom: '20px', color: '#666', fontSize: '0.9rem' }}>
                   Set overhead costs that apply to each loaf. These are added to ingredient costs when calculating profit.
                 </p>
@@ -795,9 +795,10 @@ function ConfigPage() {
                       style={{ maxWidth: '120px' }}
                     />
                   </div>
-                  <p style={{ fontSize: '0.8rem', color: '#888', marginTop: '4px' }}>
-                    Bags, labels, wrap, liners, etc.
-                  </p>
+                  <div style={{ fontSize: '0.8rem', color: '#888', marginTop: '4px', lineHeight: '1.4' }}>
+                    <strong>Includes:</strong> Bread bags, labels, twist ties, parchment paper, pan liners<br />
+                    <strong>How to calculate:</strong> Add up what you spend on packaging supplies, divide by how many loaves those supplies cover.
+                  </div>
                 </div>
 
                 <div className="form-group">
@@ -814,9 +815,10 @@ function ConfigPage() {
                       style={{ maxWidth: '120px' }}
                     />
                   </div>
-                  <p style={{ fontSize: '0.8rem', color: '#888', marginTop: '4px' }}>
-                    Electricity, paper towels, etc.
-                  </p>
+                  <div style={{ fontSize: '0.8rem', color: '#888', marginTop: '4px', lineHeight: '1.4' }}>
+                    <strong>Includes:</strong> Electricity (oven), propane/gas, paper towels, cleaning supplies<br />
+                    <strong>How to calculate:</strong> Estimate monthly costs for baking-related utilities, divide by loaves baked that month. Example: $30/month ÷ 100 loaves = $0.30/loaf
+                  </div>
                 </div>
 
                 <div style={{ borderTop: '1px solid #e0e0e0', paddingTop: '16px', marginTop: '20px' }}>
