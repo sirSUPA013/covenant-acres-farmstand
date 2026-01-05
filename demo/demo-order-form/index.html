@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Demo Order Form - Covenant Acres Farmstand" />
+    <title>Order Demo | Covenant Acres Farmstand</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Source+Sans+Pro:wght@300;400;600&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="demo-banner">
+      🎭 DEMO MODE - This is a demonstration. No real orders will be placed.
+    </div>
+
+    <div id="app">
+      <!-- Header -->
+      <header class="header">
+        <div class="header-content">
+          <h1 class="logo">Covenant Acres</h1>
+          <p class="tagline">Farmstand</p>
+        </div>
+      </header>
+
+      <!-- Main Content -->
+      <main class="main">
+        <!-- Step indicator -->
+        <div class="steps">
+          <div class="step active" data-step="1">
+            <span class="step-number">1</span>
+            <span class="step-label">Location</span>
+          </div>
+          <div class="step" data-step="2">
+            <span class="step-number">2</span>
+            <span class="step-label">Select Date</span>
+          </div>
+          <div class="step" data-step="3">
+            <span class="step-number">3</span>
+            <span class="step-label">Choose Bread</span>
+          </div>
+          <div class="step" data-step="4">
+            <span class="step-number">4</span>
+            <span class="step-label">Your Info</span>
+          </div>
+          <div class="step" data-step="5">
+            <span class="step-number">5</span>
+            <span class="step-label">Confirm</span>
+          </div>
+        </div>
+
+        <!-- Step 1: Select Location -->
+        <section id="step-1" class="step-content active">
+          <h2>Where would you like to pick up?</h2>
+          <p class="step-description">Select your preferred pickup location.</p>
+          <div id="locations" class="bake-slots-grid">
+            <!-- Populated by JavaScript -->
+          </div>
+        </section>
+
+        <!-- Step 2: Select Date -->
+        <section id="step-2" class="step-content">
+          <h2>When would you like to pick up?</h2>
+          <p class="step-description">Select an available bake day at <span id="selected-location-name"></span>.</p>
+          <div id="bake-slots" class="bake-slots-grid">
+            <!-- Populated by JavaScript -->
+          </div>
+          <div class="step-actions">
+            <button class="btn btn-secondary" onclick="goToStep(1)">Back</button>
+          </div>
+        </section>
+
+        <!-- Step 3: Select Flavors -->
+        <section id="step-3" class="step-content">
+          <h2>What would you like to order?</h2>
+          <p class="step-description">Select your bread and quantities. <span id="remaining-capacity"></span></p>
+          <div id="flavors" class="flavors-grid">
+            <!-- Populated by JavaScript -->
+          </div>
+          <div class="order-summary" id="order-summary">
+            <h3>Your Order</h3>
+            <div id="order-items"></div>
+            <div class="order-total">
+              <span>Total:</span>
+              <span id="order-total-amount">$0.00</span>
+            </div>
+          </div>
+          <div class="step-actions">
+            <button class="btn btn-secondary" onclick="goToStep(2)">Back</button>
+            <button class="btn btn-primary" onclick="goToStep(4)" id="to-step-4" disabled>Continue</button>
+          </div>
+        </section>
+
+        <!-- Step 4: Customer Info -->
+        <section id="step-4" class="step-content">
+          <h2>Your Information</h2>
+          <p class="step-description">How can we reach you about your order?</p>
+
+          <form id="customer-form" class="customer-form">
+            <div class="form-group">
+              <label for="email">Email *</label>
+              <input type="email" id="email" name="email" required placeholder="your@email.com" />
+            </div>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label for="firstName">First Name *</label>
+                <input type="text" id="firstName" name="firstName" required />
+              </div>
+              <div class="form-group">
+                <label for="lastName">Last Name *</label>
+                <input type="text" id="lastName" name="lastName" required />
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="phone">Phone *</label>
+              <input type="tel" id="phone" name="phone" required placeholder="(555) 555-5555" />
+            </div>
+
+            <div class="form-group">
+              <label for="notes">Order Notes (optional)</label>
+              <textarea id="notes" name="notes" rows="3" placeholder="Any special requests or notes..."></textarea>
+            </div>
+
+          </form>
+
+          <div class="step-actions">
+            <button class="btn btn-secondary" onclick="goToStep(3)">Back</button>
+            <button class="btn btn-primary" onclick="goToStep(5)" id="to-step-5">Review Order</button>
+          </div>
+        </section>
+
+        <!-- Step 5: Confirmation -->
+        <section id="step-5" class="step-content">
+          <h2>Review Your Order</h2>
+          <p class="step-description">Please confirm everything looks correct.</p>
+
+          <div class="confirmation-details">
+            <div class="confirmation-section">
+              <h3>Pickup Details</h3>
+              <p id="confirm-pickup"></p>
+            </div>
+
+            <div class="confirmation-section">
+              <h3>Order Items</h3>
+              <div id="confirm-items"></div>
+              <div class="order-total">
+                <span>Total:</span>
+                <span id="confirm-total">$0.00</span>
+              </div>
+            </div>
+
+            <div class="confirmation-section">
+              <h3>Your Information</h3>
+              <p id="confirm-customer"></p>
+            </div>
+
+            <div class="payment-info">
+              <h3>Payment</h3>
+              <p>Payment is due at pickup. We accept:</p>
+              <ul class="payment-methods">
+                <li>Cash</li>
+                <li>Venmo: <strong>@CovenantAcres</strong></li>
+                <li>Cash App: <strong>$CovenantAcres</strong></li>
+                <li>Zelle: <strong>pay@covenantacresin.com</strong></li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="step-actions">
+            <button class="btn btn-secondary" onclick="goToStep(4)">Back</button>
+            <button class="btn btn-primary btn-submit" onclick="submitOrder()" id="submit-order">
+              Place Order (Demo)
+            </button>
+          </div>
+        </section>
+
+        <!-- Success -->
+        <section id="step-success" class="step-content">
+          <div class="success-message">
+            <div class="success-icon">✓</div>
+            <h2>Demo Order Complete!</h2>
+            <p>In a real scenario, the customer would receive a confirmation email and the order would appear in the admin portal.</p>
+            <div id="success-details"></div>
+
+            <div class="demo-note">
+              <strong>Demo Note:</strong> This is a demonstration. No actual order was placed and no data was saved.
+            </div>
+
+            <button class="btn btn-primary" onclick="startNewOrder()">Try Another Order</button>
+          </div>
+        </section>
+      </main>
+
+      <!-- Footer -->
+      <footer class="footer">
+        <p>&copy; 2026 Covenant Acres Farmstand</p>
+        <p class="demo-footer">DEMONSTRATION VERSION</p>
+      </footer>
+    </div>
+
+    <script src="demo-data.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
