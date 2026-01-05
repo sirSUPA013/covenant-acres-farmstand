@@ -6,13 +6,42 @@ interface Order {
   first_name: string;
   last_name: string;
   email: string;
+  phone: string;
   bake_date: string;
+  bake_slot_id: string;
   location_name: string;
+  pickup_location_id: string;
   items: string;
   total_amount: number;
   status: string;
   payment_status: string;
+  notes: string;
   created_at: string;
+}
+
+interface OrderItem {
+  flavorId: string;
+  flavorName: string;
+  size: string;
+  quantity: number;
+  unitPrice: number;
+  totalPrice: number;
+}
+
+interface Flavor {
+  id: string;
+  name: string;
+  sizes: string;
+  is_active: number;
+}
+
+interface BakeSlot {
+  id: string;
+  date: string;
+  total_capacity: number;
+  current_orders: number;
+  locations: Array<{ id: string; name: string }>;
+  location_name: string;
 }
 
 function OrdersPage() {
@@ -25,6 +54,15 @@ function OrdersPage() {
   const [bulkPayment, setBulkPayment] = useState('');
   const [bulkPaymentMethod, setBulkPaymentMethod] = useState('');
   const [requirePaymentMethod, setRequirePaymentMethod] = useState(false);
+
+  // Edit mode state
+  const [isEditing, setIsEditing] = useState(false);
+  const [editItems, setEditItems] = useState<OrderItem[]>([]);
+  const [editNotes, setEditNotes] = useState('');
+  const [editBakeSlotId, setEditBakeSlotId] = useState('');
+  const [flavors, setFlavors] = useState<Flavor[]>([]);
+  const [bakeSlots, setBakeSlots] = useState<BakeSlot[]>([]);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     loadOrders();
@@ -88,12 +126,187 @@ function OrdersPage() {
     });
   }
 
-  function parseItems(itemsJson: string) {
+  function parseItems(itemsJson: string): OrderItem[] {
     try {
-      return JSON.parse(itemsJson) as Array<{ flavorName: string; quantity: number }>;
+      return JSON.parse(itemsJson) as OrderItem[];
     } catch {
       return [];
     }
+  }
+
+  async function startEditing(order: Order) {
+    setIsEditing(true);
+    setEditItems(parseItems(order.items));
+    setEditNotes(order.notes || '');
+    setEditBakeSlotId(order.bake_slot_id);
+
+    // Load flavors and bake slots for editing
+    try {
+      const [flavorsData, slotsData] = await Promise.all([
+        window.api.getFlavors(),
+        window.api.getBakeSlots({ upcoming: true }),
+      ]);
+      setFlavors(flavorsData as Flavor[]);
+      setBakeSlots(slotsData as BakeSlot[]);
+    } catch (error) {
+      console.error('Failed to load edit data:', error);
+    }
+  }
+
+  function cancelEditing() {
+    setIsEditing(false);
+    setEditItems([]);
+    setEditNotes('');
+    setEditBakeSlotId('');
+  }
+
+  function updateItemQuantity(index: number, delta: number) {
+    setEditItems((prev) => {
+      const updated = [...prev];
+      const newQty = Math.max(0, updated[index].quantity + delta);
+      if (newQty === 0) {
+        // Remove item if quantity is 0
+        updated.splice(index, 1);
+      } else {
+        updated[index] = {
+          ...updated[index],
+          quantity: newQty,
+          totalPrice: newQty * updated[index].unitPrice,
+        };
+      }
+      return updated;
+    });
+  }
+
+  function addItemToOrder(flavorId: string) {
+    const flavor = flavors.find((f) => f.id === flavorId);
+    if (!flavor) return;
+
+    const sizes = JSON.parse(flavor.sizes || '[]') as Array<{ name: string; price: number }>;
+    const defaultSize = sizes[0] || { name: 'Regular', price: 10 };
+
+    // Check if flavor already exists in order
+    const existingIndex = editItems.findIndex((item) => item.flavorId === flavorId);
+    if (existingIndex >= 0) {
+      updateItemQuantity(existingIndex, 1);
+      return;
+    }
+
+    setEditItems((prev) => [
+      ...prev,
+      {
+        flavorId: flavor.id,
+        flavorName: flavor.name,
+        size: defaultSize.name,
+        quantity: 1,
+        unitPrice: defaultSize.price,
+        totalPrice: defaultSize.price,
+      },
+    ]);
+  }
+
+  function calculateEditTotal(): number {
+    return editItems.reduce((sum, item) => sum + item.totalPrice, 0);
+  }
+
+  async function saveOrderChanges() {
+    if (!selectedOrder) return;
+    if (editItems.length === 0) {
+      alert('Order must have at least one item');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const newTotal = calculateEditTotal();
+      const updates: Record<string, unknown> = {
+        items: JSON.stringify(editItems),
+        total_amount: newTotal,
+        notes: editNotes,
+      };
+
+      // If bake slot changed, update it
+      if (editBakeSlotId !== selectedOrder.bake_slot_id) {
+        updates.bake_slot_id = editBakeSlotId;
+      }
+
+      await window.api.updateOrder(selectedOrder.id, updates);
+      await loadOrders();
+      setIsEditing(false);
+      setSelectedOrder(null);
+    } catch (error) {
+      console.error('Failed to save order:', error);
+      alert('Failed to save changes');
+    }
+    setSaving(false);
+  }
+
+  function exportToCSV() {
+    if (orders.length === 0) {
+      alert('No orders to export');
+      return;
+    }
+
+    // Build CSV content
+    const headers = [
+      'Order ID',
+      'Date',
+      'Customer Name',
+      'Email',
+      'Phone',
+      'Pickup Date',
+      'Location',
+      'Items',
+      'Total',
+      'Status',
+      'Payment Status',
+      'Notes',
+    ];
+
+    const rows = orders.map((order) => {
+      const items = parseItems(order.items)
+        .map((i) => `${i.flavorName} x${i.quantity}`)
+        .join('; ');
+
+      return [
+        order.id.split('-')[0].toUpperCase(),
+        new Date(order.created_at).toLocaleDateString(),
+        `${order.first_name} ${order.last_name}`,
+        order.email,
+        order.phone || '',
+        formatDate(order.bake_date),
+        order.location_name,
+        items,
+        `$${order.total_amount.toFixed(2)}`,
+        order.status,
+        order.payment_status,
+        (order.notes || '').replace(/"/g, '""'),
+      ];
+    });
+
+    // Escape values and build CSV string
+    const escapeCSV = (val: string) => {
+      if (val.includes(',') || val.includes('"') || val.includes('\n')) {
+        return `"${val.replace(/"/g, '""')}"`;
+      }
+      return val;
+    };
+
+    const csv = [
+      headers.join(','),
+      ...rows.map((row) => row.map(escapeCSV).join(',')),
+    ].join('\n');
+
+    // Download the file
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `orders-${new Date().toISOString().split('T')[0]}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   }
 
   function toggleSelection(orderId: string) {
@@ -163,9 +376,14 @@ function OrdersPage() {
     <div className="orders-page">
       <div className="page-header">
         <h1 className="page-title">Orders</h1>
-        <button className="btn btn-primary" onClick={loadOrders}>
-          Refresh
-        </button>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <button className="btn btn-secondary" onClick={exportToCSV}>
+            Export CSV
+          </button>
+          <button className="btn btn-primary" onClick={loadOrders}>
+            Refresh
+          </button>
+        </div>
       </div>
 
       <div className="filters">
@@ -330,17 +548,19 @@ function OrdersPage() {
 
       {/* Order Detail Modal */}
       {selectedOrder && (
-        <div className="modal-overlay" onClick={() => setSelectedOrder(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-overlay" onClick={() => { if (!isEditing) { setSelectedOrder(null); } }}>
+          <div className="modal modal-large" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2 className="modal-title">
                 Order #{selectedOrder.id.split('-')[0].toUpperCase()}
+                {isEditing && <span style={{ color: '#f59e0b', marginLeft: '8px' }}>(Editing)</span>}
               </h2>
-              <button className="modal-close" onClick={() => setSelectedOrder(null)}>
+              <button className="modal-close" onClick={() => { cancelEditing(); setSelectedOrder(null); }}>
                 ×
               </button>
             </div>
             <div className="modal-body">
+              {/* Customer Info - Read Only */}
               <div className="form-row">
                 <div className="form-group">
                   <label className="form-label">Customer</label>
@@ -348,26 +568,126 @@ function OrdersPage() {
                     {selectedOrder.first_name} {selectedOrder.last_name}
                   </p>
                   <p style={{ color: '#666' }}>{selectedOrder.email}</p>
+                  {selectedOrder.phone && <p style={{ color: '#666' }}>{selectedOrder.phone}</p>}
                 </div>
                 <div className="form-group">
                   <label className="form-label">Pickup</label>
-                  <p>{formatDate(selectedOrder.bake_date)}</p>
-                  <p style={{ color: '#666' }}>{selectedOrder.location_name}</p>
+                  {isEditing ? (
+                    <select
+                      className="form-select"
+                      value={editBakeSlotId}
+                      onChange={(e) => setEditBakeSlotId(e.target.value)}
+                    >
+                      {bakeSlots.map((slot) => (
+                        <option key={slot.id} value={slot.id}>
+                          {formatDate(slot.date)} - {slot.location_name}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <>
+                      <p>{formatDate(selectedOrder.bake_date)}</p>
+                      <p style={{ color: '#666' }}>{selectedOrder.location_name}</p>
+                    </>
+                  )}
                 </div>
               </div>
 
+              {/* Order Items */}
               <div className="form-group">
                 <label className="form-label">Items</label>
-                {parseItems(selectedOrder.items).map((item, i) => (
-                  <p key={i}>
-                    {item.flavorName} × {item.quantity}
-                  </p>
-                ))}
-                <p style={{ fontWeight: 600, marginTop: '8px' }}>
-                  Total: ${selectedOrder.total_amount.toFixed(2)}
-                </p>
+                {isEditing ? (
+                  <div className="edit-items-section">
+                    {editItems.map((item, i) => (
+                      <div key={i} className="edit-item-row">
+                        <span className="item-name">{item.flavorName}</span>
+                        <div className="quantity-controls">
+                          <button
+                            className="btn btn-small btn-secondary"
+                            onClick={() => updateItemQuantity(i, -1)}
+                          >
+                            −
+                          </button>
+                          <span className="quantity-value">{item.quantity}</span>
+                          <button
+                            className="btn btn-small btn-secondary"
+                            onClick={() => updateItemQuantity(i, 1)}
+                          >
+                            +
+                          </button>
+                        </div>
+                        <span className="item-price">${item.totalPrice.toFixed(2)}</span>
+                      </div>
+                    ))}
+
+                    {/* Add Item Dropdown */}
+                    <div className="add-item-row">
+                      <select
+                        className="form-select"
+                        defaultValue=""
+                        onChange={(e) => {
+                          if (e.target.value) {
+                            addItemToOrder(e.target.value);
+                            e.target.value = '';
+                          }
+                        }}
+                      >
+                        <option value="">+ Add item...</option>
+                        {flavors
+                          .filter((f) => f.is_active)
+                          .map((f) => (
+                            <option key={f.id} value={f.id}>
+                              {f.name}
+                            </option>
+                          ))}
+                      </select>
+                    </div>
+
+                    <div className="edit-total">
+                      <strong>New Total: ${calculateEditTotal().toFixed(2)}</strong>
+                      {calculateEditTotal() !== selectedOrder.total_amount && (
+                        <span style={{ color: '#666', marginLeft: '8px' }}>
+                          (was ${selectedOrder.total_amount.toFixed(2)})
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    {parseItems(selectedOrder.items).map((item, i) => (
+                      <p key={i}>
+                        {item.flavorName} × {item.quantity}
+                        <span style={{ color: '#666', marginLeft: '8px' }}>
+                          ${item.totalPrice?.toFixed(2) || (item.quantity * (item.unitPrice || 0)).toFixed(2)}
+                        </span>
+                      </p>
+                    ))}
+                    <p style={{ fontWeight: 600, marginTop: '8px' }}>
+                      Total: ${selectedOrder.total_amount.toFixed(2)}
+                    </p>
+                  </>
+                )}
               </div>
 
+              {/* Notes */}
+              <div className="form-group">
+                <label className="form-label">Notes</label>
+                {isEditing ? (
+                  <textarea
+                    className="form-textarea"
+                    value={editNotes}
+                    onChange={(e) => setEditNotes(e.target.value)}
+                    rows={3}
+                    placeholder="Order notes..."
+                  />
+                ) : (
+                  <p style={{ color: selectedOrder.notes ? '#333' : '#999' }}>
+                    {selectedOrder.notes || 'No notes'}
+                  </p>
+                )}
+              </div>
+
+              {/* Status Controls */}
               <div className="form-row">
                 <div className="form-group">
                   <label className="form-label">Order Status</label>
@@ -375,6 +695,7 @@ function OrdersPage() {
                     className="form-select"
                     value={selectedOrder.status}
                     onChange={(e) => updateOrderStatus(selectedOrder.id, e.target.value)}
+                    disabled={isEditing}
                   >
                     {statusOptions.slice(1).map((opt) => (
                       <option key={opt.value} value={opt.value}>
@@ -389,6 +710,7 @@ function OrdersPage() {
                     className="form-select"
                     value={selectedOrder.payment_status}
                     onChange={(e) => updatePaymentStatus(selectedOrder.id, e.target.value)}
+                    disabled={isEditing}
                   >
                     <option value="pending">Pending</option>
                     <option value="paid">Paid</option>
@@ -399,9 +721,25 @@ function OrdersPage() {
               </div>
             </div>
             <div className="modal-footer">
-              <button className="btn btn-secondary" onClick={() => setSelectedOrder(null)}>
-                Close
-              </button>
+              {isEditing ? (
+                <>
+                  <button className="btn btn-secondary" onClick={cancelEditing} disabled={saving}>
+                    Cancel
+                  </button>
+                  <button className="btn btn-primary" onClick={saveOrderChanges} disabled={saving}>
+                    {saving ? 'Saving...' : 'Save Changes'}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button className="btn btn-secondary" onClick={() => setSelectedOrder(null)}>
+                    Close
+                  </button>
+                  <button className="btn btn-primary" onClick={() => startEditing(selectedOrder)}>
+                    Edit Order
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>

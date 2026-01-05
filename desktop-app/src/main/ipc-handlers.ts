@@ -63,11 +63,13 @@ export function setupIpcHandlers(): void {
     const db = getDb();
     let query = `
       SELECT o.*, c.first_name, c.last_name, c.email, c.phone,
-             b.date as bake_date, l.name as location_name
+             b.date as bake_date,
+             COALESCE(pl.name, l.name) as location_name
       FROM orders o
       LEFT JOIN customers c ON o.customer_id = c.id
       LEFT JOIN bake_slots b ON o.bake_slot_id = b.id
       LEFT JOIN locations l ON b.location_id = l.id
+      LEFT JOIN locations pl ON o.pickup_location_id = pl.id
       WHERE 1=1
     `;
     const params: unknown[] = [];
