@@ -27,34 +27,51 @@
         <div class="steps">
           <div class="step active" data-step="1">
             <span class="step-number">1</span>
-            <span class="step-label">Select Date</span>
+            <span class="step-label">Location</span>
           </div>
           <div class="step" data-step="2">
             <span class="step-number">2</span>
-            <span class="step-label">Choose Bread</span>
+            <span class="step-label">Select Date</span>
           </div>
           <div class="step" data-step="3">
             <span class="step-number">3</span>
-            <span class="step-label">Your Info</span>
+            <span class="step-label">Choose Bread</span>
           </div>
           <div class="step" data-step="4">
             <span class="step-number">4</span>
+            <span class="step-label">Your Info</span>
+          </div>
+          <div class="step" data-step="5">
+            <span class="step-number">5</span>
             <span class="step-label">Confirm</span>
           </div>
         </div>
 
-        <!-- Step 1: Select Bake Slot -->
+        <!-- Step 1: Select Location -->
         <section id="step-1" class="step-content active">
+          <h2>Where would you like to pick up?</h2>
+          <p class="step-description">Select your preferred pickup location.</p>
+          <div id="locations" class="bake-slots-grid">
+            <!-- Populated by JavaScript -->
+            <div class="loading">Loading locations...</div>
+          </div>
+        </section>
+
+        <!-- Step 2: Select Date -->
+        <section id="step-2" class="step-content">
           <h2>When would you like to pick up?</h2>
-          <p class="step-description">Select an available date and pickup location.</p>
+          <p class="step-description">Select an available bake day at <span id="selected-location-name"></span>.</p>
           <div id="bake-slots" class="bake-slots-grid">
             <!-- Populated by JavaScript -->
             <div class="loading">Loading available dates...</div>
           </div>
+          <div class="step-actions">
+            <button class="btn btn-secondary" onclick="goToStep(1)">Back</button>
+          </div>
         </section>
 
-        <!-- Step 2: Select Flavors -->
-        <section id="step-2" class="step-content">
+        <!-- Step 3: Select Flavors -->
+        <section id="step-3" class="step-content">
           <h2>What would you like to order?</h2>
           <p class="step-description">Select your bread and quantities. <span id="remaining-capacity"></span></p>
           <div id="flavors" class="flavors-grid">
@@ -70,17 +87,35 @@
             </div>
           </div>
           <div class="step-actions">
-            <button class="btn btn-secondary" onclick="goToStep(1)">Back</button>
-            <button class="btn btn-primary" onclick="goToStep(3)" id="to-step-3" disabled>Continue</button>
+            <button class="btn btn-secondary" onclick="goToStep(2)">Back</button>
+            <button class="btn btn-primary" onclick="goToStep(4)" id="to-step-4" disabled>Continue</button>
           </div>
         </section>
 
-        <!-- Step 3: Customer Info -->
-        <section id="step-3" class="step-content">
+        <!-- Step 4: Customer Info -->
+        <section id="step-4" class="step-content">
           <h2>Your Information</h2>
           <p class="step-description">How can we reach you about your order?</p>
 
+          <!-- Order History (shown for returning customers) -->
+          <div id="order-history" class="order-history" style="display: none;">
+            <div class="welcome-back">
+              <span class="welcome-icon">👋</span>
+              <span>Welcome back, <strong id="returning-customer-name"></strong>!</span>
+            </div>
+            <details class="history-details">
+              <summary>View your previous orders</summary>
+              <div id="history-list" class="history-list"></div>
+            </details>
+          </div>
+
           <form id="customer-form" class="customer-form">
+            <div class="form-group">
+              <label for="email">Email *</label>
+              <input type="email" id="email" name="email" required placeholder="Enter your email first" />
+              <p class="form-hint">We'll check if you've ordered before to speed things up!</p>
+            </div>
+
             <div class="form-row">
               <div class="form-group">
                 <label for="firstName">First Name *</label>
@@ -93,11 +128,6 @@
             </div>
 
             <div class="form-group">
-              <label for="email">Email *</label>
-              <input type="email" id="email" name="email" required />
-            </div>
-
-            <div class="form-group">
               <label for="phone">Phone *</label>
               <input type="tel" id="phone" name="phone" required placeholder="(555) 555-5555" />
             </div>
@@ -107,47 +137,16 @@
               <textarea id="notes" name="notes" rows="3" placeholder="Any special requests or notes..."></textarea>
             </div>
 
-            <div class="form-group">
-              <label>How would you like to receive updates?</label>
-              <div class="notification-options">
-                <label class="checkbox-label">
-                  <input type="radio" name="notificationPref" value="email" checked />
-                  <span>Email</span>
-                </label>
-                <label class="checkbox-label">
-                  <input type="radio" name="notificationPref" value="sms" />
-                  <span>Text Message</span>
-                </label>
-                <label class="checkbox-label">
-                  <input type="radio" name="notificationPref" value="both" />
-                  <span>Both</span>
-                </label>
-              </div>
-            </div>
-
-            <div class="form-group sms-consent" id="sms-consent" style="display: none;">
-              <label class="checkbox-label">
-                <input type="checkbox" id="smsOptIn" name="smsOptIn" />
-                <span>I agree to receive text messages about my order. Message and data rates may apply.</span>
-              </label>
-            </div>
-
-            <div class="form-group">
-              <label class="checkbox-label">
-                <input type="checkbox" id="createAccount" name="createAccount" />
-                <span>Save my info for faster checkout next time</span>
-              </label>
-            </div>
           </form>
 
           <div class="step-actions">
-            <button class="btn btn-secondary" onclick="goToStep(2)">Back</button>
-            <button class="btn btn-primary" onclick="goToStep(4)" id="to-step-4">Review Order</button>
+            <button class="btn btn-secondary" onclick="goToStep(3)">Back</button>
+            <button class="btn btn-primary" onclick="goToStep(5)" id="to-step-5">Review Order</button>
           </div>
         </section>
 
-        <!-- Step 4: Confirmation -->
-        <section id="step-4" class="step-content">
+        <!-- Step 5: Confirmation -->
+        <section id="step-5" class="step-content">
           <h2>Review Your Order</h2>
           <p class="step-description">Please confirm everything looks correct.</p>
 
@@ -184,7 +183,7 @@
           </div>
 
           <div class="step-actions">
-            <button class="btn btn-secondary" onclick="goToStep(3)">Back</button>
+            <button class="btn btn-secondary" onclick="goToStep(4)">Back</button>
             <button class="btn btn-primary btn-submit" onclick="submitOrder()" id="submit-order">
               Place Order
             </button>
@@ -196,8 +195,17 @@
           <div class="success-message">
             <div class="success-icon">✓</div>
             <h2>Order Placed!</h2>
-            <p>Thank you for your order. You'll receive a confirmation shortly.</p>
+            <p>Thank you for your order! We'll be in touch about pickup details.</p>
             <div id="success-details"></div>
+
+            <!-- Payment Options (dynamically shown if enabled) -->
+            <div id="payment-options" class="payment-options" style="display: none;">
+              <h3>Pay Now (Optional)</h3>
+              <p class="payment-note">You can pay now or at pickup. Your order total: <strong id="payment-total">$0.00</strong></p>
+              <div id="payment-links" class="payment-links"></div>
+              <p class="payment-hint">After sending payment, please include your order number in the note.</p>
+            </div>
+
             <button class="btn btn-primary" onclick="startNewOrder()">Place Another Order</button>
           </div>
         </section>

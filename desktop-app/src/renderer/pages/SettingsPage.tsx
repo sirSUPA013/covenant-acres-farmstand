@@ -9,6 +9,8 @@ interface Settings {
   requirePaymentMethod: boolean;
   notificationEmail: boolean;
   notificationSms: boolean;
+  notificationEmails: string; // JSON array of email addresses
+  notificationPhones: string; // JSON array of phone numbers
   smsProvider: string;
   smsApiKey: string;
   emailProvider: string;
@@ -17,6 +19,17 @@ interface Settings {
   googleCredentials: string;
   quietHoursStart: string;
   quietHoursEnd: string;
+  // Payment links
+  enablePrepayment: boolean;
+  venmoUsername: string;
+  cashappCashtag: string;
+  paypalUsername: string;
+  zelleEmail: string;
+  // Time estimates for profit/hr calculation
+  bakeDaySetupMinutes: number;
+  bakeDayPerLoafMinutes: number;
+  bakeDayCleanupMinutes: number;
+  miscProductionPerLoafMinutes: number;
 }
 
 interface AdminUser {
@@ -50,6 +63,8 @@ function SettingsPage() {
     requirePaymentMethod: false,
     notificationEmail: true,
     notificationSms: false,
+    notificationEmails: '[]',
+    notificationPhones: '[]',
     smsProvider: '',
     smsApiKey: '',
     emailProvider: '',
@@ -58,11 +73,24 @@ function SettingsPage() {
     googleCredentials: '',
     quietHoursStart: '21:00',
     quietHoursEnd: '08:00',
+    enablePrepayment: false,
+    venmoUsername: '',
+    cashappCashtag: '',
+    paypalUsername: '',
+    zelleEmail: '',
+    bakeDaySetupMinutes: 60,
+    bakeDayPerLoafMinutes: 8,
+    bakeDayCleanupMinutes: 45,
+    miscProductionPerLoafMinutes: 15,
   });
+
+  // State for new recipient inputs
+  const [newEmail, setNewEmail] = useState('');
+  const [newPhone, setNewPhone] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-  const [activeSection, setActiveSection] = useState<'general' | 'notifications' | 'integrations' | 'users' | 'activity'>('general');
+  const [activeSection, setActiveSection] = useState<'general' | 'time' | 'payment' | 'notifications' | 'integrations' | 'users' | 'activity'>('general');
   const [syncStatus, setSyncStatus] = useState<{ lastSync: string | null; pendingChanges: number; isOnline: boolean }>({
     lastSync: null,
     pendingChanges: 0,
@@ -176,6 +204,57 @@ function SettingsPage() {
     }
   }
 
+  // Notification recipient helpers
+  function getNotificationEmails(): string[] {
+    try {
+      return JSON.parse(settings.notificationEmails || '[]');
+    } catch {
+      return [];
+    }
+  }
+
+  function getNotificationPhones(): string[] {
+    try {
+      return JSON.parse(settings.notificationPhones || '[]');
+    } catch {
+      return [];
+    }
+  }
+
+  function addNotificationEmail() {
+    if (!newEmail.trim()) return;
+    const emails = getNotificationEmails();
+    if (emails.includes(newEmail.trim())) {
+      setMessage({ type: 'error', text: 'Email already added' });
+      return;
+    }
+    emails.push(newEmail.trim());
+    updateSetting('notificationEmails', JSON.stringify(emails));
+    setNewEmail('');
+  }
+
+  function removeNotificationEmail(email: string) {
+    const emails = getNotificationEmails().filter(e => e !== email);
+    updateSetting('notificationEmails', JSON.stringify(emails));
+  }
+
+  function addNotificationPhone() {
+    if (!newPhone.trim()) return;
+    const phones = getNotificationPhones();
+    if (phones.includes(newPhone.trim())) {
+      setMessage({ type: 'error', text: 'Phone already added' });
+      return;
+    }
+    phones.push(newPhone.trim());
+    updateSetting('notificationPhones', JSON.stringify(phones));
+    setNewPhone('');
+  }
+
+  function removeNotificationPhone(phone: string) {
+    const phones = getNotificationPhones().filter(p => p !== phone);
+    updateSetting('notificationPhones', JSON.stringify(phones));
+  }
+
   async function loadSettings() {
     setLoading(true);
     try {
@@ -286,6 +365,18 @@ function SettingsPage() {
             General
           </button>
           <button
+            className={`settings-nav-item ${activeSection === 'time' ? 'active' : ''}`}
+            onClick={() => setActiveSection('time')}
+          >
+            Time Estimates
+          </button>
+          <button
+            className={`settings-nav-item ${activeSection === 'payment' ? 'active' : ''}`}
+            onClick={() => setActiveSection('payment')}
+          >
+            Payment
+          </button>
+          <button
             className={`settings-nav-item ${activeSection === 'notifications' ? 'active' : ''}`}
             onClick={() => setActiveSection('notifications')}
           >
@@ -369,10 +460,198 @@ function SettingsPage() {
                 </p>
               </div>
 
+            </div>
+          )}
+
+          {/* Time Estimates */}
+          {activeSection === 'time' && (
+            <div className="card">
+              <div className="card-header">
+                <h2 className="card-title">Time Estimates</h2>
+              </div>
+              <p className="form-hint" style={{ marginBottom: '20px' }}>
+                These estimates are used to calculate your profit per hour. Update them as your processes become more efficient.
+              </p>
+
+              <h3 style={{ fontSize: '1rem', marginBottom: '12px', color: 'var(--primary-green)' }}>Bake Day Time</h3>
+              <p className="form-hint" style={{ marginBottom: '16px' }}>
+                Time spent on days when you have scheduled orders.
+              </p>
+
+              <div className="form-row">
+                <div className="form-group">
+                  <label className="form-label">Setup Time (minutes)</label>
+                  <input
+                    type="number"
+                    className="form-input"
+                    value={settings.bakeDaySetupMinutes}
+                    onChange={(e) => updateSetting('bakeDaySetupMinutes', parseInt(e.target.value) || 0)}
+                    min="0"
+                    style={{ width: '120px' }}
+                  />
+                  <p className="form-hint">Time to prepare before baking (gathering ingredients, preheating, etc.)</p>
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Time Per Loaf (minutes)</label>
+                  <input
+                    type="number"
+                    className="form-input"
+                    value={settings.bakeDayPerLoafMinutes}
+                    onChange={(e) => updateSetting('bakeDayPerLoafMinutes', parseInt(e.target.value) || 0)}
+                    min="0"
+                    style={{ width: '120px' }}
+                  />
+                  <p className="form-hint">Average hands-on time per loaf during a bake day</p>
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Cleanup Time (minutes)</label>
+                <input
+                  type="number"
+                  className="form-input"
+                  value={settings.bakeDayCleanupMinutes}
+                  onChange={(e) => updateSetting('bakeDayCleanupMinutes', parseInt(e.target.value) || 0)}
+                  min="0"
+                  style={{ width: '120px' }}
+                />
+                <p className="form-hint">Time to clean up after baking is done</p>
+              </div>
+
+              <hr style={{ margin: '24px 0', border: 'none', borderTop: '1px solid #e5e7eb' }} />
+
+              <h3 style={{ fontSize: '1rem', marginBottom: '12px', color: 'var(--primary-green)' }}>Misc Production Time</h3>
+              <p className="form-hint" style={{ marginBottom: '16px' }}>
+                Time spent on extra production (walk-in sales, gifts, etc.) made outside of scheduled bake days.
+              </p>
+
+              <div className="form-group">
+                <label className="form-label">Time Per Loaf (minutes)</label>
+                <input
+                  type="number"
+                  className="form-input"
+                  value={settings.miscProductionPerLoafMinutes}
+                  onChange={(e) => updateSetting('miscProductionPerLoafMinutes', parseInt(e.target.value) || 0)}
+                  min="0"
+                  style={{ width: '120px' }}
+                />
+                <p className="form-hint">Average time per loaf for small batches (typically higher than bake day time)</p>
+              </div>
+
+              <div style={{ marginTop: '24px', padding: '16px', background: '#f0f9ff', borderRadius: '8px', border: '1px solid #0ea5e9' }}>
+                <strong style={{ color: '#0369a1' }}>Example Calculation</strong>
+                <p style={{ marginTop: '8px', color: '#0369a1', fontSize: '0.875rem' }}>
+                  For a bake day with 20 loaves:<br />
+                  {settings.bakeDaySetupMinutes} min setup + ({settings.bakeDayPerLoafMinutes} min × 20 loaves) + {settings.bakeDayCleanupMinutes} min cleanup = {settings.bakeDaySetupMinutes + (settings.bakeDayPerLoafMinutes * 20) + settings.bakeDayCleanupMinutes} minutes ({((settings.bakeDaySetupMinutes + (settings.bakeDayPerLoafMinutes * 20) + settings.bakeDayCleanupMinutes) / 60).toFixed(1)} hours)
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Payment Settings */}
+          {activeSection === 'payment' && (
+            <div className="card">
+              <div className="card-header">
+                <h2 className="card-title">Payment Links</h2>
+              </div>
+
+              <div className="form-group">
+                <label className="toggle-label">
+                  <input
+                    type="checkbox"
+                    checked={settings.enablePrepayment}
+                    onChange={(e) => updateSetting('enablePrepayment', e.target.checked)}
+                  />
+                  <span>Enable prepayment options on order form</span>
+                </label>
+                <p className="form-hint">
+                  When enabled, customers will see payment links after placing an order so they can pay in advance.
+                </p>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Venmo Username</label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ color: '#666' }}>@</span>
+                  <input
+                    type="text"
+                    className="form-input"
+                    value={settings.venmoUsername}
+                    onChange={(e) => updateSetting('venmoUsername', e.target.value)}
+                    placeholder="YourVenmoUsername"
+                  />
+                </div>
+                <p className="form-hint">
+                  Your Venmo username (without the @). Leave blank to hide Venmo option.
+                </p>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Cash App Cashtag</label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ color: '#666' }}>$</span>
+                  <input
+                    type="text"
+                    className="form-input"
+                    value={settings.cashappCashtag}
+                    onChange={(e) => updateSetting('cashappCashtag', e.target.value)}
+                    placeholder="YourCashtag"
+                  />
+                </div>
+                <p className="form-hint">
+                  Your Cash App cashtag (without the $). Leave blank to hide Cash App option.
+                </p>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">PayPal Username</label>
+                <input
+                  type="text"
+                  className="form-input"
+                  value={settings.paypalUsername}
+                  onChange={(e) => updateSetting('paypalUsername', e.target.value)}
+                  placeholder="YourPayPalUsername"
+                />
+                <p className="form-hint">
+                  Your PayPal.me username. Leave blank to hide PayPal option.
+                </p>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Zelle Email/Phone</label>
+                <input
+                  type="text"
+                  className="form-input"
+                  value={settings.zelleEmail}
+                  onChange={(e) => updateSetting('zelleEmail', e.target.value)}
+                  placeholder="pay@youremail.com"
+                />
+                <p className="form-hint">
+                  The email or phone number registered with your Zelle account. Leave blank to hide Zelle option.
+                </p>
+              </div>
+
+              {settings.enablePrepayment && (
+                <div className="form-group" style={{ marginTop: '20px', padding: '16px', background: '#f5f5f5', borderRadius: '8px' }}>
+                  <h4 style={{ marginBottom: '8px' }}>Preview</h4>
+                  <p style={{ color: '#666', fontSize: '14px', marginBottom: '12px' }}>
+                    Customers will see these payment options after placing an order:
+                  </p>
+                  <ul style={{ margin: 0, paddingLeft: '20px', color: '#333' }}>
+                    {settings.venmoUsername && <li>Venmo: @{settings.venmoUsername}</li>}
+                    {settings.cashappCashtag && <li>Cash App: ${settings.cashappCashtag}</li>}
+                    {settings.paypalUsername && <li>PayPal: paypal.me/{settings.paypalUsername}</li>}
+                    {settings.zelleEmail && <li>Zelle: {settings.zelleEmail}</li>}
+                    {!settings.venmoUsername && !settings.cashappCashtag && !settings.paypalUsername && !settings.zelleEmail && (
+                      <li style={{ color: '#999' }}>No payment methods configured</li>
+                    )}
+                  </ul>
+                </div>
+              )}
+
               <hr style={{ margin: '24px 0', border: 'none', borderTop: '1px solid #eee' }} />
 
               <h3 style={{ marginBottom: '16px' }}>Order Management</h3>
-
               <div className="form-group">
                 <label className="toggle-label">
                   <input
@@ -416,6 +695,129 @@ function SettingsPage() {
                   />
                   <span>Enable SMS Notifications</span>
                 </label>
+              </div>
+
+              <hr style={{ margin: '24px 0', border: 'none', borderTop: '1px solid #eee' }} />
+
+              <h3 style={{ marginBottom: '16px' }}>Owner Notification Recipients</h3>
+              <p className="form-hint mb-lg">
+                Add email addresses and phone numbers to receive notifications when new orders are placed.
+              </p>
+
+              {/* Email Recipients */}
+              <div className="form-group">
+                <label className="form-label">Email Addresses</label>
+                <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+                  <input
+                    type="email"
+                    className="form-input"
+                    value={newEmail}
+                    onChange={(e) => setNewEmail(e.target.value)}
+                    placeholder="Enter email address"
+                    onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addNotificationEmail())}
+                  />
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={addNotificationEmail}
+                    style={{ whiteSpace: 'nowrap' }}
+                  >
+                    Add
+                  </button>
+                </div>
+                {getNotificationEmails().length > 0 && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                    {getNotificationEmails().map((email) => (
+                      <span
+                        key={email}
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          padding: '4px 10px',
+                          backgroundColor: '#e8f5e9',
+                          borderRadius: '16px',
+                          fontSize: '0.9rem',
+                        }}
+                      >
+                        {email}
+                        <button
+                          type="button"
+                          onClick={() => removeNotificationEmail(email)}
+                          style={{
+                            border: 'none',
+                            background: 'none',
+                            cursor: 'pointer',
+                            padding: '0',
+                            fontSize: '1rem',
+                            lineHeight: 1,
+                            color: '#666',
+                          }}
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Phone Recipients */}
+              <div className="form-group">
+                <label className="form-label">Phone Numbers (for SMS)</label>
+                <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+                  <input
+                    type="tel"
+                    className="form-input"
+                    value={newPhone}
+                    onChange={(e) => setNewPhone(e.target.value)}
+                    placeholder="Enter phone number"
+                    onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addNotificationPhone())}
+                  />
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={addNotificationPhone}
+                    style={{ whiteSpace: 'nowrap' }}
+                  >
+                    Add
+                  </button>
+                </div>
+                {getNotificationPhones().length > 0 && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                    {getNotificationPhones().map((phone) => (
+                      <span
+                        key={phone}
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          padding: '4px 10px',
+                          backgroundColor: '#e3f2fd',
+                          borderRadius: '16px',
+                          fontSize: '0.9rem',
+                        }}
+                      >
+                        {phone}
+                        <button
+                          type="button"
+                          onClick={() => removeNotificationPhone(phone)}
+                          style={{
+                            border: 'none',
+                            background: 'none',
+                            cursor: 'pointer',
+                            padding: '0',
+                            fontSize: '1rem',
+                            lineHeight: 1,
+                            color: '#666',
+                          }}
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <hr style={{ margin: '24px 0', border: 'none', borderTop: '1px solid #eee' }} />

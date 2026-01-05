@@ -15,6 +15,18 @@ function hashPin(pin: string): string {
   return crypto.createHash('sha256').update(pin).digest('hex');
 }
 
+// Check if a PIN is already in use (excludeId allows updating own PIN)
+function isPinTaken(pin: string, excludeId?: string): boolean {
+  const db = getDb();
+  const pinHash = hashPin(pin);
+  const query = excludeId
+    ? 'SELECT COUNT(*) as count FROM admin_users WHERE pin_hash = ? AND id != ? AND is_active = 1'
+    : 'SELECT COUNT(*) as count FROM admin_users WHERE pin_hash = ? AND is_active = 1';
+  const params = excludeId ? [pinHash, excludeId] : [pinHash];
+  const result = db.prepare(query).get(...params) as { count: number };
+  return result.count > 0;
+}
+
 // Current logged-in user (in-memory session)
 let currentUser: {
   id: string;
@@ -164,9 +176,8 @@ export function setupIpcHandlers(): void {
   ipcMain.handle('bakeSlots:getAll', async (_event, filters) => {
     const db = getDb();
     let query = `
-      SELECT b.*, l.name as location_name
+      SELECT b.*
       FROM bake_slots b
-      LEFT JOIN locations l ON b.location_id = l.id
       WHERE 1=1
     `;
     const params: unknown[] = [];
@@ -175,13 +186,61 @@ export function setupIpcHandlers(): void {
       query += " AND b.date >= date('now')";
     }
     if (filters?.locationId) {
-      query += ' AND b.location_id = ?';
+      // Filter by location using junction table
+      query += ` AND b.id IN (
+        SELECT bake_slot_id FROM bake_slot_locations WHERE location_id = ?
+      )`;
       params.push(filters.locationId);
     }
 
     query += ' ORDER BY b.date ASC';
 
-    return db.prepare(query).all(...params);
+    const slots = db.prepare(query).all(...params) as Array<Record<string, unknown>>;
+
+    // For each slot, get its locations from the junction table
+    const getLocationsStmt = db.prepare(`
+      SELECT l.id, l.name
+      FROM bake_slot_locations bsl
+      JOIN locations l ON bsl.location_id = l.id
+      WHERE bsl.bake_slot_id = ?
+      ORDER BY l.name
+    `);
+
+    return slots.map(slot => {
+      const locations = getLocationsStmt.all(slot.id) as Array<{ id: string; name: string }>;
+      return {
+        ...slot,
+        locations,
+        // For backward compatibility, also include first location as location_name
+        location_name: locations.length > 0 ? locations.map(l => l.name).join(', ') : 'No locations',
+      };
+    });
+  });
+
+  // Get bake slots available at a specific location (for order form)
+  ipcMain.handle('bakeSlots:getByLocation', async (_event, locationId: string) => {
+    const db = getDb();
+    const slots = db.prepare(`
+      SELECT b.*
+      FROM bake_slots b
+      JOIN bake_slot_locations bsl ON b.id = bsl.bake_slot_id
+      WHERE bsl.location_id = ?
+        AND b.is_open = 1
+        AND b.date >= date('now')
+        AND (b.cutoff_time IS NULL OR b.cutoff_time >= datetime('now'))
+      ORDER BY b.date ASC
+    `).all(locationId) as Array<Record<string, unknown>>;
+
+    return slots.map(slot => {
+      const total = (slot.total_capacity as number) || 0;
+      const current = (slot.current_orders as number) || 0;
+      return {
+        id: slot.id,
+        date: slot.date,
+        spotsRemaining: Math.max(0, total - current),
+        isOpen: total - current > 0,
+      };
+    });
   });
 
   ipcMain.handle('bakeSlots:create', async (_event, data) => {
@@ -189,28 +248,72 @@ export function setupIpcHandlers(): void {
     const id = `slot-${Date.now().toString(36)}`;
     const now = new Date().toISOString();
 
+    // Create the bake slot (location_id kept for backward compatibility but can be null)
+    const firstLocationId = data.locationIds?.[0] || data.locationId || null;
     db.prepare(
       `INSERT INTO bake_slots (id, date, location_id, total_capacity, cutoff_time, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?)`
-    ).run(id, data.date, data.locationId, data.totalCapacity, data.cutoffTime, now, now);
+    ).run(id, data.date, firstLocationId, data.totalCapacity, data.cutoffTime, now, now);
 
-    log('info', 'Bake slot created', { id, date: data.date });
+    // Insert location associations into junction table
+    const locationIds = data.locationIds || (data.locationId ? [data.locationId] : []);
+    const insertLocationStmt = db.prepare(`
+      INSERT INTO bake_slot_locations (id, bake_slot_id, location_id, created_at)
+      VALUES (?, ?, ?, ?)
+    `);
+
+    for (const locationId of locationIds) {
+      const junctionId = `bsl-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+      insertLocationStmt.run(junctionId, id, locationId, now);
+    }
+
+    log('info', 'Bake slot created', { id, date: data.date, locationCount: locationIds.length });
     return id;
   });
 
   ipcMain.handle('bakeSlots:update', async (_event, id, data) => {
     const db = getDb();
-    const fields = Object.keys(data)
-      .map((k) => `${k} = ?`)
-      .join(', ');
-    const values = [...Object.values(data), new Date().toISOString(), id];
+    const now = new Date().toISOString();
 
-    db.prepare(`UPDATE bake_slots SET ${fields}, updated_at = ? WHERE id = ?`).run(...values);
+    // Handle locationIds separately if provided
+    if (data.locationIds) {
+      // Remove existing location associations
+      db.prepare('DELETE FROM bake_slot_locations WHERE bake_slot_id = ?').run(id);
+
+      // Insert new location associations
+      const insertLocationStmt = db.prepare(`
+        INSERT INTO bake_slot_locations (id, bake_slot_id, location_id, created_at)
+        VALUES (?, ?, ?, ?)
+      `);
+
+      for (const locationId of data.locationIds) {
+        const junctionId = `bsl-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+        insertLocationStmt.run(junctionId, id, locationId, now);
+      }
+
+      // Update legacy location_id field for backward compatibility
+      if (data.locationIds.length > 0) {
+        db.prepare('UPDATE bake_slots SET location_id = ? WHERE id = ?').run(data.locationIds[0], id);
+      }
+
+      // Remove locationIds from data so it's not included in the UPDATE below
+      delete data.locationIds;
+    }
+
+    // Update other fields if any remain
+    const updateFields = Object.keys(data);
+    if (updateFields.length > 0) {
+      const fields = updateFields.map((k) => `${k} = ?`).join(', ');
+      const values = [...Object.values(data), now, id];
+      db.prepare(`UPDATE bake_slots SET ${fields}, updated_at = ? WHERE id = ?`).run(...values);
+    }
+
     log('info', 'Bake slot updated', { id });
   });
 
   ipcMain.handle('bakeSlots:delete', async (_event, id) => {
     const db = getDb();
+    // Junction table entries will be deleted automatically due to ON DELETE CASCADE
     db.prepare('DELETE FROM bake_slots WHERE id = ?').run(id);
     log('info', 'Bake slot deleted', { id });
   });
@@ -611,6 +714,169 @@ export function setupIpcHandlers(): void {
     });
   });
 
+  // Profit per hour calculation
+  ipcMain.handle('analytics:profitPerHour', async (_event, filters) => {
+    const db = getDb();
+
+    // Get time settings
+    const settings = db.prepare('SELECT * FROM settings WHERE id = 1').get() as {
+      bake_day_setup_minutes: number | null;
+      bake_day_per_loaf_minutes: number | null;
+      bake_day_cleanup_minutes: number | null;
+      misc_production_per_loaf_minutes: number | null;
+    } | undefined;
+
+    const bakeDaySetup = settings?.bake_day_setup_minutes ?? 60;
+    const bakeDayPerLoaf = settings?.bake_day_per_loaf_minutes ?? 8;
+    const bakeDayCleanup = settings?.bake_day_cleanup_minutes ?? 45;
+    const miscPerLoaf = settings?.misc_production_per_loaf_minutes ?? 15;
+
+    // Get overhead costs
+    const overhead = db.prepare('SELECT * FROM overhead_settings WHERE id = 1').get() as { packaging_per_loaf: number; utilities_per_loaf: number } | undefined;
+    const overheadPerLoaf = (overhead?.packaging_per_loaf || 0) + (overhead?.utilities_per_loaf || 0);
+
+    // Get flavor costs
+    const flavorCosts = new Map<string, number>();
+    const flavors = db.prepare('SELECT id, estimated_cost FROM flavors').all() as Array<{ id: string; estimated_cost: number | null }>;
+    flavors.forEach(f => {
+      flavorCosts.set(f.id, (f.estimated_cost || 0) + overheadPerLoaf);
+    });
+
+    // Build date filter
+    let dateFilter = '';
+    const params: unknown[] = [];
+    if (filters?.startDate) {
+      dateFilter += ' AND b.date >= ?';
+      params.push(filters.startDate);
+    }
+    if (filters?.endDate) {
+      dateFilter += ' AND b.date <= ?';
+      params.push(filters.endDate);
+    }
+
+    // Get bake slots with orders
+    const bakeSlots = db.prepare(`
+      SELECT b.id, b.date, COUNT(DISTINCT o.id) as order_count,
+             GROUP_CONCAT(o.items) as all_items,
+             SUM(o.total_amount) as revenue
+      FROM bake_slots b
+      LEFT JOIN orders o ON o.bake_slot_id = b.id AND o.status NOT IN ('canceled', 'no_show') AND o.payment_status = 'paid'
+      WHERE 1=1 ${dateFilter}
+      GROUP BY b.id
+      HAVING order_count > 0
+    `).all(...params) as Array<{
+      id: string;
+      date: string;
+      order_count: number;
+      all_items: string | null;
+      revenue: number | null;
+    }>;
+
+    let totalBakeSlots = bakeSlots.length;
+    let totalBakeSlotLoaves = 0;
+    let totalBakeSlotRevenue = 0;
+    let totalBakeSlotCogs = 0;
+
+    for (const slot of bakeSlots) {
+      totalBakeSlotRevenue += slot.revenue || 0;
+      if (slot.all_items) {
+        const itemsArrays = slot.all_items.split(',').filter(Boolean);
+        itemsArrays.forEach(itemsJson => {
+          try {
+            const items = JSON.parse(itemsJson) as Array<{ flavorId: string; quantity: number }>;
+            items.forEach(item => {
+              totalBakeSlotLoaves += item.quantity;
+              totalBakeSlotCogs += (flavorCosts.get(item.flavorId) || 0) * item.quantity;
+            });
+          } catch { /* skip */ }
+        });
+      }
+    }
+
+    // Get extra production (misc batches)
+    let extraDateFilter = '';
+    const extraParams: unknown[] = [];
+    if (filters?.startDate) {
+      extraDateFilter += ' AND production_date >= ?';
+      extraParams.push(filters.startDate);
+    }
+    if (filters?.endDate) {
+      extraDateFilter += ' AND production_date <= ?';
+      extraParams.push(filters.endDate);
+    }
+
+    const extraProduction = db.prepare(`
+      SELECT ep.disposition, ep.flavor_id, SUM(ep.quantity) as total_qty, SUM(ep.total_revenue) as revenue
+      FROM extra_production ep
+      WHERE 1=1 ${extraDateFilter}
+      GROUP BY ep.disposition, ep.flavor_id
+    `).all(...extraParams) as Array<{
+      disposition: string;
+      flavor_id: string;
+      total_qty: number;
+      revenue: number | null;
+    }>;
+
+    let extraLoaves = 0;
+    let extraRevenue = 0;
+    let extraCogs = 0;
+
+    for (const row of extraProduction) {
+      extraLoaves += row.total_qty;
+      extraCogs += (flavorCosts.get(row.flavor_id) || 0) * row.total_qty;
+      if (row.disposition === 'sold') {
+        extraRevenue += row.revenue || 0;
+      }
+    }
+
+    // Calculate total time
+    // Bake day time: (setup + cleanup) per day + (per_loaf * loaves)
+    const bakeSlotTimeMinutes = totalBakeSlots * (bakeDaySetup + bakeDayCleanup) + (totalBakeSlotLoaves * bakeDayPerLoaf);
+    // Extra production time: per_loaf * loaves
+    const extraTimeMinutes = extraLoaves * miscPerLoaf;
+    const totalTimeMinutes = bakeSlotTimeMinutes + extraTimeMinutes;
+    const totalTimeHours = totalTimeMinutes / 60;
+
+    // Calculate profit
+    const totalRevenue = totalBakeSlotRevenue + extraRevenue;
+    const totalCogs = totalBakeSlotCogs + extraCogs;
+    const totalProfit = totalRevenue - totalCogs;
+    const profitPerHour = totalTimeHours > 0 ? totalProfit / totalTimeHours : 0;
+
+    return {
+      bakeSlots: {
+        count: totalBakeSlots,
+        loaves: totalBakeSlotLoaves,
+        revenue: totalBakeSlotRevenue,
+        cogs: totalBakeSlotCogs,
+        profit: totalBakeSlotRevenue - totalBakeSlotCogs,
+        timeMinutes: bakeSlotTimeMinutes,
+      },
+      extraProduction: {
+        loaves: extraLoaves,
+        revenue: extraRevenue,
+        cogs: extraCogs,
+        profit: extraRevenue - extraCogs,
+        timeMinutes: extraTimeMinutes,
+      },
+      totals: {
+        loaves: totalBakeSlotLoaves + extraLoaves,
+        revenue: totalRevenue,
+        cogs: totalCogs,
+        profit: totalProfit,
+        timeMinutes: totalTimeMinutes,
+        timeHours: totalTimeHours,
+        profitPerHour,
+      },
+      timeSettings: {
+        bakeDaySetupMinutes: bakeDaySetup,
+        bakeDayPerLoafMinutes: bakeDayPerLoaf,
+        bakeDayCleanupMinutes: bakeDayCleanup,
+        miscProductionPerLoafMinutes: miscPerLoaf,
+      },
+    };
+  });
+
   // Prep Sheet
   ipcMain.handle('prepSheet:generate', async (_event, bakeSlotId) => {
     const db = getDb();
@@ -811,6 +1077,8 @@ export function setupIpcHandlers(): void {
       require_payment_method: 'requirePaymentMethod',
       notification_email: 'notificationEmail',
       notification_sms: 'notificationSms',
+      notification_emails: 'notificationEmails',
+      notification_phones: 'notificationPhones',
       sms_provider: 'smsProvider',
       sms_api_key: 'smsApiKey',
       email_provider: 'emailProvider',
@@ -819,9 +1087,18 @@ export function setupIpcHandlers(): void {
       google_credentials: 'googleCredentials',
       quiet_hours_start: 'quietHoursStart',
       quiet_hours_end: 'quietHoursEnd',
+      enable_prepayment: 'enablePrepayment',
+      venmo_username: 'venmoUsername',
+      cashapp_cashtag: 'cashappCashtag',
+      paypal_username: 'paypalUsername',
+      zelle_email: 'zelleEmail',
+      bake_day_setup_minutes: 'bakeDaySetupMinutes',
+      bake_day_per_loaf_minutes: 'bakeDayPerLoafMinutes',
+      bake_day_cleanup_minutes: 'bakeDayCleanupMinutes',
+      misc_production_per_loaf_minutes: 'miscProductionPerLoafMinutes',
     };
 
-    const booleanFields = ['notificationEmail', 'notificationSms', 'requirePaymentMethod'];
+    const booleanFields = ['notificationEmail', 'notificationSms', 'requirePaymentMethod', 'enablePrepayment'];
     const converted: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(settings)) {
       const frontendKey = keyMap[key] || key;
@@ -848,6 +1125,8 @@ export function setupIpcHandlers(): void {
       requirePaymentMethod: 'require_payment_method',
       notificationEmail: 'notification_email',
       notificationSms: 'notification_sms',
+      notificationEmails: 'notification_emails',
+      notificationPhones: 'notification_phones',
       smsProvider: 'sms_provider',
       smsApiKey: 'sms_api_key',
       emailProvider: 'email_provider',
@@ -856,6 +1135,15 @@ export function setupIpcHandlers(): void {
       googleCredentials: 'google_credentials',
       quietHoursStart: 'quiet_hours_start',
       quietHoursEnd: 'quiet_hours_end',
+      enablePrepayment: 'enable_prepayment',
+      venmoUsername: 'venmo_username',
+      cashappCashtag: 'cashapp_cashtag',
+      paypalUsername: 'paypal_username',
+      zelleEmail: 'zelle_email',
+      bakeDaySetupMinutes: 'bake_day_setup_minutes',
+      bakeDayPerLoafMinutes: 'bake_day_per_loaf_minutes',
+      bakeDayCleanupMinutes: 'bake_day_cleanup_minutes',
+      miscProductionPerLoafMinutes: 'misc_production_per_loaf_minutes',
     };
 
     // Convert data keys to snake_case and booleans to integers
@@ -960,6 +1248,11 @@ export function setupIpcHandlers(): void {
       return { success: false, error: 'Developer account already exists' };
     }
 
+    // Check if PIN is already in use
+    if (isPinTaken(pin)) {
+      return { success: false, error: 'This PIN is already in use. Please choose a different PIN.' };
+    }
+
     const id = `admin-${Date.now().toString(36)}`;
     const now = new Date().toISOString();
 
@@ -976,6 +1269,11 @@ export function setupIpcHandlers(): void {
   });
 
   ipcMain.handle('admin:setupOwner', async (_event, name: string, pin: string) => {
+    // Check if PIN is already in use
+    if (isPinTaken(pin)) {
+      return { success: false, error: 'This PIN is already in use. Please choose a different PIN.' };
+    }
+
     const db = getDb();
     const id = `admin-${Date.now().toString(36)}`;
     const now = new Date().toISOString();
@@ -1057,6 +1355,11 @@ export function setupIpcHandlers(): void {
       return { success: false, error: 'Only developers can create owner accounts' };
     }
 
+    // Check if PIN is already in use
+    if (isPinTaken(data.pin)) {
+      return { success: false, error: 'This PIN is already in use. Please choose a different PIN.' };
+    }
+
     const db = getDb();
     const id = `admin-${Date.now().toString(36)}`;
     const now = new Date().toISOString();
@@ -1110,6 +1413,11 @@ export function setupIpcHandlers(): void {
     // Only developers and owners can change permissions
     if (data.permissions && !currentUser?.isDeveloper && !currentUser?.isOwner) {
       return { success: false, error: 'Only developers and owners can change permissions' };
+    }
+
+    // Check if new PIN is already in use (exclude current user)
+    if (data.pin && isPinTaken(data.pin, id)) {
+      return { success: false, error: 'This PIN is already in use. Please choose a different PIN.' };
     }
 
     const updates: string[] = [];
@@ -1196,6 +1504,240 @@ export function setupIpcHandlers(): void {
 
   ipcMain.handle('system:openExternal', async (_event, url) => {
     await shell.openExternal(url);
+  });
+
+  // Extra Production
+  ipcMain.handle('extraProduction:getAll', async (_event, filters) => {
+    const db = getDb();
+    let query = `
+      SELECT ep.*,
+             f.name as flavor_name,
+             b.date as bake_date,
+             l.name as location_name
+      FROM extra_production ep
+      LEFT JOIN flavors f ON ep.flavor_id = f.id
+      LEFT JOIN bake_slots b ON ep.bake_slot_id = b.id
+      LEFT JOIN locations l ON b.location_id = l.id
+      WHERE 1=1
+    `;
+    const params: unknown[] = [];
+
+    if (filters?.dateFrom) {
+      query += ' AND ep.production_date >= ?';
+      params.push(filters.dateFrom);
+    }
+    if (filters?.dateTo) {
+      query += ' AND ep.production_date <= ?';
+      params.push(filters.dateTo);
+    }
+    if (filters?.flavorId) {
+      query += ' AND ep.flavor_id = ?';
+      params.push(filters.flavorId);
+    }
+    if (filters?.disposition) {
+      query += ' AND ep.disposition = ?';
+      params.push(filters.disposition);
+    }
+    if (filters?.bakeSlotId) {
+      query += ' AND ep.bake_slot_id = ?';
+      params.push(filters.bakeSlotId);
+    }
+
+    query += ' ORDER BY ep.production_date DESC, ep.created_at DESC';
+    return db.prepare(query).all(...params);
+  });
+
+  ipcMain.handle('extraProduction:create', async (_event, data) => {
+    const db = getDb();
+    const id = `ep-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+    const now = new Date().toISOString();
+
+    // Calculate total_revenue for sold items
+    const totalRevenue = data.disposition === 'sold'
+      ? (data.quantity * (data.salePrice || 0))
+      : null;
+
+    db.prepare(`
+      INSERT INTO extra_production (
+        id, bake_slot_id, production_date, flavor_id, quantity,
+        disposition, sale_price, total_revenue, notes, created_by,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      data.bakeSlotId || null,
+      data.productionDate,
+      data.flavorId,
+      data.quantity,
+      data.disposition,
+      data.salePrice || null,
+      totalRevenue,
+      data.notes || null,
+      currentUser?.id || null,
+      now,
+      now
+    );
+
+    logAudit('EXTRA_PRODUCTION_CREATED', 'extra_production', id,
+      `${data.quantity}x ${data.disposition}`);
+    log('info', 'Extra production logged', { id, disposition: data.disposition });
+    return { success: true, id };
+  });
+
+  ipcMain.handle('extraProduction:update', async (_event, id, data) => {
+    const db = getDb();
+    const updates: string[] = [];
+    const values: unknown[] = [];
+
+    if (data.quantity !== undefined) {
+      updates.push('quantity = ?');
+      values.push(data.quantity);
+    }
+    if (data.disposition !== undefined) {
+      updates.push('disposition = ?');
+      values.push(data.disposition);
+    }
+    if (data.salePrice !== undefined) {
+      updates.push('sale_price = ?');
+      values.push(data.salePrice);
+    }
+    if (data.notes !== undefined) {
+      updates.push('notes = ?');
+      values.push(data.notes);
+    }
+
+    // Recalculate total_revenue if quantity or salePrice changed
+    if (data.quantity !== undefined || data.salePrice !== undefined) {
+      const existing = db.prepare('SELECT quantity, sale_price, disposition FROM extra_production WHERE id = ?')
+        .get(id) as { quantity: number; sale_price: number | null; disposition: string } | undefined;
+      if (existing) {
+        const qty = data.quantity ?? existing.quantity;
+        const price = data.salePrice ?? existing.sale_price ?? 0;
+        const disp = data.disposition ?? existing.disposition;
+        const newRevenue = disp === 'sold' ? qty * price : null;
+        updates.push('total_revenue = ?');
+        values.push(newRevenue);
+      }
+    }
+
+    if (updates.length === 0) return { success: true };
+
+    updates.push('updated_at = ?');
+    values.push(new Date().toISOString());
+    values.push(id);
+
+    db.prepare(`UPDATE extra_production SET ${updates.join(', ')} WHERE id = ?`).run(...values);
+    log('info', 'Extra production updated', { id });
+    return { success: true };
+  });
+
+  ipcMain.handle('extraProduction:delete', async (_event, id) => {
+    const db = getDb();
+    db.prepare('DELETE FROM extra_production WHERE id = ?').run(id);
+    logAudit('EXTRA_PRODUCTION_DELETED', 'extra_production', id);
+    log('info', 'Extra production deleted', { id });
+    return { success: true };
+  });
+
+  ipcMain.handle('extraProduction:getOpenCapacity', async (_event, bakeSlotId) => {
+    const db = getDb();
+
+    // Get slot capacity and ordered count
+    const slot = db.prepare(`
+      SELECT total_capacity, current_orders FROM bake_slots WHERE id = ?
+    `).get(bakeSlotId) as { total_capacity: number; current_orders: number } | undefined;
+
+    if (!slot) return null;
+
+    // Get already-logged extra production for this slot
+    const extraLogged = db.prepare(`
+      SELECT COALESCE(SUM(quantity), 0) as total
+      FROM extra_production WHERE bake_slot_id = ?
+    `).get(bakeSlotId) as { total: number };
+
+    return {
+      totalCapacity: slot.total_capacity,
+      orderedCount: slot.current_orders,
+      extraLoggedCount: extraLogged.total,
+      openSlots: slot.total_capacity - slot.current_orders - extraLogged.total
+    };
+  });
+
+  ipcMain.handle('extraProduction:getAnalytics', async (_event, filters) => {
+    const db = getDb();
+    let whereClause = 'WHERE 1=1';
+    const params: unknown[] = [];
+
+    if (filters?.startDate || filters?.dateFrom) {
+      whereClause += ' AND production_date >= ?';
+      params.push(filters.startDate || filters.dateFrom);
+    }
+    if (filters?.endDate || filters?.dateTo) {
+      whereClause += ' AND production_date <= ?';
+      params.push(filters.endDate || filters.dateTo);
+    }
+
+    // Get summary by disposition
+    const summary = db.prepare(`
+      SELECT
+        disposition,
+        COUNT(*) as entry_count,
+        SUM(quantity) as total_loaves,
+        SUM(CASE WHEN disposition = 'sold' THEN total_revenue ELSE 0 END) as revenue
+      FROM extra_production
+      ${whereClause}
+      GROUP BY disposition
+    `).all(...params) as Array<{
+      disposition: string;
+      entry_count: number;
+      total_loaves: number;
+      revenue: number;
+    }>;
+
+    // Calculate cost of wasted/gifted using flavor costs
+    const wasteGiftCost = db.prepare(`
+      SELECT
+        ep.disposition,
+        SUM(ep.quantity * COALESCE(f.estimated_cost, 0)) as total_cost
+      FROM extra_production ep
+      LEFT JOIN flavors f ON ep.flavor_id = f.id
+      ${whereClause}
+      AND ep.disposition IN ('wasted', 'gifted')
+      GROUP BY ep.disposition
+    `).all(...params) as Array<{
+      disposition: string;
+      total_cost: number;
+    }>;
+
+    // Calculate totals
+    const totals = {
+      sold: { count: 0, quantity: 0, revenue: 0 },
+      gifted: { count: 0, quantity: 0, cost: 0 },
+      wasted: { count: 0, quantity: 0, cost: 0 },
+      personal: { count: 0, quantity: 0 },
+      totalLoaves: 0
+    };
+
+    for (const row of summary) {
+      const key = row.disposition as 'sold' | 'gifted' | 'wasted' | 'personal';
+      if (totals[key]) {
+        totals[key].count = row.entry_count || 0;
+        totals[key].quantity = row.total_loaves || 0;
+        totals.totalLoaves += row.total_loaves || 0;
+        if (key === 'sold') {
+          totals[key].revenue = row.revenue || 0;
+        }
+      }
+    }
+
+    for (const row of wasteGiftCost) {
+      const key = row.disposition as 'wasted' | 'gifted';
+      if (totals[key]) {
+        totals[key].cost = row.total_cost || 0;
+      }
+    }
+
+    return totals;
   });
 
   log('info', 'IPC handlers registered');

@@ -1,17 +1,52 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 
+// Ingredient with library reference
 interface Ingredient {
+  ingredient_id?: string;
   name: string;
   quantity: number;
   unit: string;
   cost_per_unit?: number;
+  phase?: 'base' | 'fold' | 'lamination';
 }
 
+// Step with ID for drag-and-drop
 interface RecipeStep {
+  id: string;
   order: number;
   instruction: string;
   duration_minutes?: number;
-  notes?: string;
+  phase?: string;
+}
+
+// Library ingredient from database
+interface LibraryIngredient {
+  id: string;
+  name: string;
+  unit: string;
+  cost_per_unit: number;
+  package_price: number;
+  package_size: number;
+  package_unit: string;
+  vendor: string;
+  category: string;
 }
 
 interface Recipe {
@@ -19,10 +54,10 @@ interface Recipe {
   name: string;
   flavor_id: string;
   flavor_name: string;
-  base_ingredients: string; // JSON
-  fold_ingredients: string; // JSON
-  lamination_ingredients: string; // JSON
-  steps: string; // JSON
+  base_ingredients: string;
+  fold_ingredients: string;
+  lamination_ingredients: string;
+  steps: string;
   yields_loaves: number;
   loaf_size: string;
   total_cost: number;
@@ -38,25 +73,194 @@ interface Recipe {
   bake_instructions: string;
 }
 
+const STEP_PHASES = ['Setup', 'Mix', 'Bulk Ferment', 'Shape', 'Proof', 'Bake', 'Cool'] as const;
+const INGREDIENT_PHASES = ['base', 'fold', 'lamination'] as const;
+
+// Sortable Step Component
+function SortableStep({
+  step,
+  index,
+  onUpdate,
+  onRemove,
+}: {
+  step: RecipeStep;
+  index: number;
+  onUpdate: (index: number, field: keyof RecipeStep, value: string | number) => void;
+  onRemove: (index: number) => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: step.id,
+  });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  return (
+    <div ref={setNodeRef} style={style} className="step-row">
+      <div {...attributes} {...listeners} className="drag-handle">
+        ≡
+      </div>
+      <span className="step-number">{index + 1}.</span>
+      <div className="step-content">
+        <div className="step-header">
+          <select
+            className="step-phase-select"
+            value={step.phase || ''}
+            onChange={(e) => onUpdate(index, 'phase', e.target.value)}
+          >
+            <option value="">Phase...</option>
+            {STEP_PHASES.map((phase) => (
+              <option key={phase} value={phase}>
+                {phase}
+              </option>
+            ))}
+          </select>
+          <div className="step-duration">
+            <input
+              type="number"
+              placeholder="0"
+              value={step.duration_minutes || ''}
+              onChange={(e) => onUpdate(index, 'duration_minutes', parseInt(e.target.value) || 0)}
+            />
+            <span>min</span>
+          </div>
+        </div>
+        <textarea
+          className="step-instruction"
+          placeholder="Describe this step..."
+          value={step.instruction}
+          onChange={(e) => onUpdate(index, 'instruction', e.target.value)}
+          rows={3}
+        />
+      </div>
+      <button className="step-remove" onClick={() => onRemove(index)}>
+        ×
+      </button>
+    </div>
+  );
+}
+
+// Ingredient Dropdown Component
+function IngredientDropdown({
+  value,
+  libraryIngredients,
+  onSelect,
+  onAddNew,
+}: {
+  value: string;
+  libraryIngredients: LibraryIngredient[];
+  onSelect: (ingredient: LibraryIngredient) => void;
+  onAddNew: () => void;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [search, setSearch] = useState(value);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setSearch(value);
+  }, [value]);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const filtered = libraryIngredients.filter((ing) =>
+    ing.name.toLowerCase().includes(search.toLowerCase())
+  );
+
+  return (
+    <div className="ingredient-dropdown" ref={dropdownRef}>
+      <input
+        type="text"
+        className="ingredient-dropdown-input"
+        placeholder="Select ingredient..."
+        value={search}
+        onChange={(e) => {
+          setSearch(e.target.value);
+          setIsOpen(true);
+        }}
+        onFocus={() => setIsOpen(true)}
+      />
+      {isOpen && (
+        <div className="ingredient-dropdown-list">
+          {filtered.map((ing) => (
+            <div
+              key={ing.id}
+              className={`ingredient-dropdown-item ${ing.name === value ? 'selected' : ''}`}
+              onClick={() => {
+                onSelect(ing);
+                setSearch(ing.name);
+                setIsOpen(false);
+              }}
+            >
+              {ing.name}
+              <span className="ingredient-detail">
+                {ing.unit} · ${ing.cost_per_unit?.toFixed(4)}/{ing.unit}
+              </span>
+            </div>
+          ))}
+          <div
+            className="ingredient-dropdown-item add-new"
+            onClick={() => {
+              onAddNew();
+              setIsOpen(false);
+            }}
+          >
+            ➕ Add New Ingredient
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function RecipesPage() {
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedRecipe, setSelectedRecipe] = useState<Recipe | null>(null);
   const [editMode, setEditMode] = useState(false);
 
+  // Library ingredients
+  const [libraryIngredients, setLibraryIngredients] = useState<LibraryIngredient[]>([]);
+
   // Edit form state
   const [editIngredients, setEditIngredients] = useState<Ingredient[]>([]);
   const [editSteps, setEditSteps] = useState<RecipeStep[]>([]);
-  const [editYield, setEditYield] = useState(1);
-  const [editPrepTime, setEditPrepTime] = useState(0);
-  const [editBakeTime, setEditBakeTime] = useState(0);
   const [editBakeTemp, setEditBakeTemp] = useState('');
-  const [editPrepInstructions, setEditPrepInstructions] = useState('');
-  const [editBakeInstructions, setEditBakeInstructions] = useState('');
   const [editNotes, setEditNotes] = useState('');
+
+  // Inline ingredient form
+  const [showInlineForm, setShowInlineForm] = useState(false);
+  const [newIngredient, setNewIngredient] = useState({
+    name: '',
+    unit: 'g',
+    package_price: 0,
+    package_size: 0,
+    package_unit: '',
+    vendor: '',
+    category: 'base',
+  });
+
+  // Drag and drop sensors
+  const sensors = useSensors(
+    useSensor(PointerSensor),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
 
   useEffect(() => {
     loadRecipes();
+    loadLibraryIngredients();
   }, []);
 
   async function loadRecipes() {
@@ -70,26 +274,45 @@ function RecipesPage() {
     setLoading(false);
   }
 
+  async function loadLibraryIngredients() {
+    try {
+      const data = await window.api.getIngredients();
+      setLibraryIngredients(data as LibraryIngredient[]);
+    } catch (error) {
+      console.error('Failed to load ingredients:', error);
+    }
+  }
+
   function openRecipe(recipe: Recipe) {
     setSelectedRecipe(recipe);
     setEditMode(false);
-    // Parse JSON fields - combine all ingredient types
+    // Parse JSON fields with phase assignment
     try {
-      const base = JSON.parse(recipe.base_ingredients || '[]');
-      const fold = JSON.parse(recipe.fold_ingredients || '[]');
-      const lamination = JSON.parse(recipe.lamination_ingredients || '[]');
+      const base = JSON.parse(recipe.base_ingredients || '[]').map((ing: Ingredient) => ({
+        ...ing,
+        phase: 'base' as const,
+      }));
+      const fold = JSON.parse(recipe.fold_ingredients || '[]').map((ing: Ingredient) => ({
+        ...ing,
+        phase: 'fold' as const,
+      }));
+      const lamination = JSON.parse(recipe.lamination_ingredients || '[]').map((ing: Ingredient) => ({
+        ...ing,
+        phase: 'lamination' as const,
+      }));
       setEditIngredients([...base, ...fold, ...lamination]);
-      setEditSteps(JSON.parse(recipe.steps || '[]'));
+
+      // Parse steps with IDs
+      const steps = JSON.parse(recipe.steps || '[]').map((step: RecipeStep, idx: number) => ({
+        ...step,
+        id: step.id || `step-${Date.now()}-${idx}`,
+      }));
+      setEditSteps(steps);
     } catch {
       setEditIngredients([]);
       setEditSteps([]);
     }
-    setEditYield(recipe.yields_loaves || 1);
-    setEditPrepTime(recipe.prep_time_minutes || 0);
-    setEditBakeTime(recipe.bake_time_minutes || 0);
     setEditBakeTemp(recipe.bake_temp || '');
-    setEditPrepInstructions(recipe.prep_instructions || '');
-    setEditBakeInstructions(recipe.bake_instructions || '');
     setEditNotes(recipe.notes || '');
   }
 
@@ -101,15 +324,26 @@ function RecipesPage() {
     if (!selectedRecipe) return;
 
     try {
+      // Separate ingredients by phase
+      const baseIngredients = editIngredients.filter((i) => i.phase === 'base' || !i.phase);
+      const foldIngredients = editIngredients.filter((i) => i.phase === 'fold');
+      const laminationIngredients = editIngredients.filter((i) => i.phase === 'lamination');
+
+      // Auto-calculate times from step phases
+      const prepTimeMinutes = calculatePreBakeTime(editSteps);
+      const bakeTimeMinutes = calculateBakeTime(editSteps);
+
       await window.api.updateRecipe(selectedRecipe.id, {
-        baseIngredients: editIngredients,
+        baseIngredients,
+        foldIngredients,
+        laminationIngredients,
         steps: editSteps,
-        yieldsLoaves: editYield,
-        prepTimeMinutes: editPrepTime,
-        bakeTimeMinutes: editBakeTime,
+        yieldsLoaves: 1, // Always 1 loaf per recipe
+        prepTimeMinutes,
+        bakeTimeMinutes,
         bakeTemp: editBakeTemp,
-        prepInstructions: editPrepInstructions,
-        bakeInstructions: editBakeInstructions,
+        prepInstructions: '', // Clear legacy fields
+        bakeInstructions: '',
         notes: editNotes,
       });
       setEditMode(false);
@@ -122,8 +356,20 @@ function RecipesPage() {
   function addIngredient() {
     setEditIngredients([
       ...editIngredients,
-      { name: '', quantity: 0, unit: 'g', cost_per_unit: 0 },
+      { name: '', quantity: 0, unit: 'g', cost_per_unit: 0, phase: 'base' },
     ]);
+  }
+
+  function selectIngredientFromLibrary(index: number, libIngredient: LibraryIngredient) {
+    const updated = [...editIngredients];
+    updated[index] = {
+      ...updated[index],
+      ingredient_id: libIngredient.id,
+      name: libIngredient.name,
+      unit: libIngredient.unit,
+      cost_per_unit: libIngredient.cost_per_unit,
+    };
+    setEditIngredients(updated);
   }
 
   function updateIngredient(index: number, field: keyof Ingredient, value: string | number) {
@@ -137,10 +383,14 @@ function RecipesPage() {
   }
 
   function addStep() {
-    setEditSteps([
-      ...editSteps,
-      { order: editSteps.length + 1, instruction: '', duration_minutes: 0 },
-    ]);
+    const newStep: RecipeStep = {
+      id: `step-${Date.now()}`,
+      order: editSteps.length + 1,
+      instruction: '',
+      duration_minutes: 0,
+      phase: '',
+    };
+    setEditSteps([...editSteps, newStep]);
   }
 
   function updateStep(index: number, field: keyof RecipeStep, value: string | number) {
@@ -151,15 +401,86 @@ function RecipesPage() {
 
   function removeStep(index: number) {
     const updated = editSteps.filter((_, i) => i !== index);
-    // Reorder
     updated.forEach((step, i) => {
       step.order = i + 1;
     });
     setEditSteps(updated);
   }
 
+  function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    if (over && active.id !== over.id) {
+      setEditSteps((items) => {
+        const oldIndex = items.findIndex((i) => i.id === active.id);
+        const newIndex = items.findIndex((i) => i.id === over.id);
+        const reordered = arrayMove(items, oldIndex, newIndex);
+        return reordered.map((step, idx) => ({ ...step, order: idx + 1 }));
+      });
+    }
+  }
+
+  async function saveNewIngredient() {
+    if (!newIngredient.name || !newIngredient.package_size) {
+      return;
+    }
+    try {
+      const result = await window.api.createIngredient({
+        name: newIngredient.name,
+        unit: newIngredient.unit,
+        package_price: newIngredient.package_price,
+        package_size: newIngredient.package_size,
+        package_unit: newIngredient.package_unit,
+        vendor: newIngredient.vendor,
+        category: newIngredient.category,
+        cost_per_unit: newIngredient.package_price / newIngredient.package_size,
+      });
+      await loadLibraryIngredients();
+      setShowInlineForm(false);
+      setNewIngredient({
+        name: '',
+        unit: 'g',
+        package_price: 0,
+        package_size: 0,
+        package_unit: '',
+        vendor: '',
+        category: 'base',
+      });
+    } catch (error) {
+      console.error('Failed to create ingredient:', error);
+    }
+  }
+
+  const PRE_BAKE_PHASES = ['Setup', 'Mix', 'Bulk Ferment', 'Shape', 'Proof'];
+  const BAKE_PHASES = ['Bake', 'Cool'];
+
+  function calculatePreBakeTime(steps: RecipeStep[]): number {
+    return steps
+      .filter((s) => PRE_BAKE_PHASES.includes(s.phase || ''))
+      .reduce((sum, step) => sum + (step.duration_minutes || 0), 0);
+  }
+
+  function calculateBakeTime(steps: RecipeStep[]): number {
+    return steps
+      .filter((s) => BAKE_PHASES.includes(s.phase || ''))
+      .reduce((sum, step) => sum + (step.duration_minutes || 0), 0);
+  }
+
+  function formatMinutes(minutes: number): string {
+    if (minutes === 0) return '0m';
+    const hours = Math.floor(minutes / 60);
+    const mins = minutes % 60;
+    if (hours === 0) return `${mins}m`;
+    if (mins === 0) return `${hours}h`;
+    return `${hours}h ${mins}m`;
+  }
+
+  function formatTotalTime(steps: RecipeStep[]): string {
+    const totalMinutes = steps.reduce((sum, step) => sum + (step.duration_minutes || 0), 0);
+    return formatMinutes(totalMinutes);
+  }
+
   function calculateTotalCost(ingredients: Ingredient[]): number {
-    return ingredients.reduce((sum, ing) => sum + ing.quantity * ing.cost_per_unit, 0);
+    return ingredients.reduce((sum, ing) => sum + (ing.quantity * (ing.cost_per_unit || 0)), 0);
   }
 
   function parseIngredients(json: string): Ingredient[] {
@@ -200,25 +521,18 @@ function RecipesPage() {
               const lamIng = parseIngredients(recipe.lamination_ingredients);
               const allIngredients = [...baseIng, ...foldIng, ...lamIng];
               const totalCost = recipe.total_cost || calculateTotalCost(allIngredients);
-              const yieldLoaves = recipe.yields_loaves || 1;
               return (
-                <div
-                  key={recipe.id}
-                  className="recipe-card"
-                  onClick={() => openRecipe(recipe)}
-                >
+                <div key={recipe.id} className="recipe-card" onClick={() => openRecipe(recipe)}>
                   <h3 className="recipe-name">{recipe.flavor_name || recipe.name}</h3>
                   <div className="recipe-meta">
-                    <span>Yield: {yieldLoaves} loaves</span>
+                    <span>1 loaf</span>
                     {recipe.loaf_size && <span>Size: {recipe.loaf_size}</span>}
                     {recipe.season && recipe.season !== 'year_round' && (
                       <span className="season-tag">{recipe.season}</span>
                     )}
                   </div>
                   {totalCost > 0 && (
-                    <div className="recipe-cost">
-                      Est. Cost: ${totalCost.toFixed(2)} (${(totalCost / yieldLoaves).toFixed(2)}/loaf)
-                    </div>
+                    <div className="recipe-cost">Est. Cost: ${totalCost.toFixed(2)}/loaf</div>
                   )}
                 </div>
               );
@@ -241,27 +555,10 @@ function RecipesPage() {
               {!editMode ? (
                 // View Mode
                 <>
-                  <div className="form-row">
-                    <div className="form-group">
-                      <label className="form-label">Yield</label>
-                      <p>{selectedRecipe.yields_loaves || 1} loaves</p>
-                    </div>
-                    {selectedRecipe.loaf_size && (
-                      <div className="form-group">
-                        <label className="form-label">Loaf Size</label>
-                        <p>{selectedRecipe.loaf_size}</p>
-                      </div>
-                    )}
-                    {selectedRecipe.season && selectedRecipe.season !== 'year_round' && (
-                      <div className="form-group">
-                        <label className="form-label">Season</label>
-                        <p style={{ textTransform: 'capitalize' }}>{selectedRecipe.season.replace('_', ' ')}</p>
-                      </div>
-                    )}
-                  </div>
-
                   {/* Time & Temperature */}
-                  {(selectedRecipe.prep_time_minutes || selectedRecipe.bake_time_minutes || selectedRecipe.bake_temp) && (
+                  {(selectedRecipe.prep_time_minutes ||
+                    selectedRecipe.bake_time_minutes ||
+                    selectedRecipe.bake_temp) && (
                     <div className="form-row">
                       {selectedRecipe.prep_time_minutes > 0 && (
                         <div className="form-group">
@@ -300,8 +597,14 @@ function RecipesPage() {
                           {parseIngredients(selectedRecipe.base_ingredients).map((ing, i) => (
                             <tr key={i}>
                               <td>{ing.name}</td>
-                              <td>{ing.quantity} {ing.unit}</td>
-                              <td>{ing.cost_per_unit ? `$${(ing.quantity * ing.cost_per_unit).toFixed(2)}` : '-'}</td>
+                              <td>
+                                {ing.quantity} {ing.unit}
+                              </td>
+                              <td>
+                                {ing.cost_per_unit
+                                  ? `$${(ing.quantity * ing.cost_per_unit).toFixed(2)}`
+                                  : '-'}
+                              </td>
                             </tr>
                           ))}
                         </tbody>
@@ -325,8 +628,14 @@ function RecipesPage() {
                           {parseIngredients(selectedRecipe.fold_ingredients).map((ing, i) => (
                             <tr key={i}>
                               <td>{ing.name}</td>
-                              <td>{ing.quantity} {ing.unit}</td>
-                              <td>{ing.cost_per_unit ? `$${(ing.quantity * ing.cost_per_unit).toFixed(2)}` : '-'}</td>
+                              <td>
+                                {ing.quantity} {ing.unit}
+                              </td>
+                              <td>
+                                {ing.cost_per_unit
+                                  ? `$${(ing.quantity * ing.cost_per_unit).toFixed(2)}`
+                                  : '-'}
+                              </td>
                             </tr>
                           ))}
                         </tbody>
@@ -350,8 +659,14 @@ function RecipesPage() {
                           {parseIngredients(selectedRecipe.lamination_ingredients).map((ing, i) => (
                             <tr key={i}>
                               <td>{ing.name}</td>
-                              <td>{ing.quantity} {ing.unit}</td>
-                              <td>{ing.cost_per_unit ? `$${(ing.quantity * ing.cost_per_unit).toFixed(2)}` : '-'}</td>
+                              <td>
+                                {ing.quantity} {ing.unit}
+                              </td>
+                              <td>
+                                {ing.cost_per_unit
+                                  ? `$${(ing.quantity * ing.cost_per_unit).toFixed(2)}`
+                                  : '-'}
+                              </td>
                             </tr>
                           ))}
                         </tbody>
@@ -363,39 +678,30 @@ function RecipesPage() {
                   {selectedRecipe.total_cost && (
                     <div className="form-group">
                       <label className="form-label">Cost Summary</label>
-                      <p>Total Cost: <strong>${selectedRecipe.total_cost.toFixed(2)}</strong></p>
-                      <p>Cost per Loaf: <strong>${selectedRecipe.cost_per_loaf?.toFixed(2) || (selectedRecipe.total_cost / (selectedRecipe.yields_loaves || 1)).toFixed(2)}</strong></p>
+                      <p>
+                        Total Cost: <strong>${selectedRecipe.total_cost.toFixed(2)}</strong>
+                      </p>
                     </div>
                   )}
 
-                  {/* Preparation Instructions */}
-                  {selectedRecipe.prep_instructions && (
-                    <div className="form-group">
-                      <label className="form-label">Preparation Instructions</label>
-                      <div className="instructions-text">{selectedRecipe.prep_instructions}</div>
-                    </div>
-                  )}
-
-                  {/* Baking Instructions */}
-                  {selectedRecipe.bake_instructions && (
-                    <div className="form-group">
-                      <label className="form-label">Baking Instructions</label>
-                      <div className="instructions-text">{selectedRecipe.bake_instructions}</div>
-                    </div>
-                  )}
-
-                  {/* Step-by-step Process */}
+                  {/* Steps */}
                   {parseSteps(selectedRecipe.steps).length > 0 && (
                     <div className="form-group">
-                      <label className="form-label">Step-by-Step Process</label>
+                      <label className="form-label">Process Steps</label>
                       <ol className="recipe-steps">
                         {parseSteps(selectedRecipe.steps).map((step) => (
                           <li key={step.order}>
+                            {step.phase && (
+                              <span
+                                className={`phase-badge phase-${step.phase.toLowerCase().replace(' ', '-')}`}
+                              >
+                                {step.phase}
+                              </span>
+                            )}{' '}
                             {step.instruction}
                             {step.duration_minutes ? (
                               <span className="step-time"> ({step.duration_minutes} min)</span>
                             ) : null}
-                            {step.notes && <div className="step-notes">{step.notes}</div>}
                           </li>
                         ))}
                       </ol>
@@ -414,189 +720,270 @@ function RecipesPage() {
                 <>
                   <div className="form-row">
                     <div className="form-group">
-                      <label className="form-label">Yield (loaves)</label>
-                      <input
-                        type="number"
-                        className="form-input"
-                        value={editYield}
-                        onChange={(e) => setEditYield(parseInt(e.target.value))}
-                        min="1"
-                      />
-                    </div>
-                    <div className="form-group">
-                      <label className="form-label">Prep Time (min)</label>
-                      <input
-                        type="number"
-                        className="form-input"
-                        value={editPrepTime}
-                        onChange={(e) => setEditPrepTime(parseInt(e.target.value))}
-                        min="0"
-                      />
-                    </div>
-                    <div className="form-group">
-                      <label className="form-label">Bake Time (min)</label>
-                      <input
-                        type="number"
-                        className="form-input"
-                        value={editBakeTime}
-                        onChange={(e) => setEditBakeTime(parseInt(e.target.value))}
-                        min="0"
-                      />
-                    </div>
-                    <div className="form-group">
                       <label className="form-label">Bake Temp</label>
                       <input
                         type="text"
                         className="form-input"
                         value={editBakeTemp}
                         onChange={(e) => setEditBakeTemp(e.target.value)}
-                        placeholder="e.g., 375°F"
+                        placeholder="e.g., 450°F"
                       />
                     </div>
                   </div>
 
+                  {/* Ingredients Section */}
                   <div className="form-group">
-                    <label className="form-label">
-                      Ingredients
-                      <button
-                        className="btn btn-small btn-secondary"
-                        onClick={addIngredient}
-                        style={{ marginLeft: '16px' }}
-                      >
-                        + Add
-                      </button>
-                    </label>
+                    <label className="form-label">Ingredients (per loaf)</label>
+                    <p style={{ fontSize: '0.8rem', color: '#666', marginBottom: '12px' }}>
+                      Select from ingredient library or add new ingredients.
+                    </p>
+
+                    {/* Column Headers */}
+                    {editIngredients.length > 0 && (
+                      <div className="ingredient-header">
+                        <span style={{ flex: 2 }}>Ingredient</span>
+                        <span style={{ width: '70px', textAlign: 'center' }}>Qty</span>
+                        <span style={{ minWidth: '60px', textAlign: 'center' }}>Unit</span>
+                        <span style={{ minWidth: '70px', textAlign: 'right' }}>Cost</span>
+                        <span style={{ minWidth: '100px' }}>Phase</span>
+                        <span style={{ width: '40px' }}></span>
+                      </div>
+                    )}
+
                     {editIngredients.map((ing, i) => (
                       <div key={i} className="ingredient-row">
-                        <input
-                          type="text"
-                          className="form-input"
-                          placeholder="Name"
+                        <IngredientDropdown
                           value={ing.name}
-                          onChange={(e) => updateIngredient(i, 'name', e.target.value)}
-                          style={{ flex: 2 }}
+                          libraryIngredients={libraryIngredients}
+                          onSelect={(libIng) => selectIngredientFromLibrary(i, libIng)}
+                          onAddNew={() => setShowInlineForm(true)}
                         />
                         <input
                           type="number"
-                          className="form-input"
+                          className="form-input ingredient-qty"
                           placeholder="Qty"
-                          value={ing.quantity}
-                          onChange={(e) => updateIngredient(i, 'quantity', parseFloat(e.target.value))}
-                          style={{ flex: 1 }}
-                        />
-                        <select
-                          className="form-select"
-                          value={ing.unit}
-                          onChange={(e) => updateIngredient(i, 'unit', e.target.value)}
-                          style={{ flex: 1 }}
-                        >
-                          <option value="g">g</option>
-                          <option value="kg">kg</option>
-                          <option value="oz">oz</option>
-                          <option value="lb">lb</option>
-                          <option value="ml">ml</option>
-                          <option value="L">L</option>
-                          <option value="tsp">tsp</option>
-                          <option value="tbsp">tbsp</option>
-                          <option value="cup">cup</option>
-                          <option value="each">each</option>
-                        </select>
-                        <input
-                          type="number"
-                          className="form-input"
-                          placeholder="$/unit"
-                          value={ing.cost_per_unit}
-                          onChange={(e) => updateIngredient(i, 'cost_per_unit', parseFloat(e.target.value))}
-                          step="0.01"
-                          style={{ flex: 1 }}
-                        />
-                        <button
-                          className="btn btn-small btn-danger"
-                          onClick={() => removeIngredient(i)}
-                        >
-                          ×
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* Detailed Instructions Section */}
-                  <div style={{ borderTop: '1px solid #e0e0e0', paddingTop: '16px', marginTop: '16px' }}>
-                    <h4 style={{ marginBottom: '4px', color: '#333' }}>Detailed Instructions</h4>
-                    <p style={{ fontSize: '0.8rem', color: '#666', marginBottom: '16px' }}>
-                      Full written instructions for training or reference. Include all details, tips, and explanations.
-                    </p>
-
-                    <div className="form-group">
-                      <label className="form-label">Preparation (Day Before)</label>
-                      <textarea
-                        className="form-textarea"
-                        value={editPrepInstructions}
-                        onChange={(e) => setEditPrepInstructions(e.target.value)}
-                        rows={6}
-                        placeholder="Detailed prep instructions: feeding starter, mixing, bulk ferment, shaping, overnight proof..."
-                      />
-                    </div>
-
-                    <div className="form-group">
-                      <label className="form-label">Baking (Bake Day)</label>
-                      <textarea
-                        className="form-textarea"
-                        value={editBakeInstructions}
-                        onChange={(e) => setEditBakeInstructions(e.target.value)}
-                        rows={6}
-                        placeholder="Detailed baking instructions: preheat, scoring, steam phase, browning, cooling..."
-                      />
-                    </div>
-                  </div>
-
-                  {/* Quick Reference Steps Section */}
-                  <div style={{ borderTop: '1px solid #e0e0e0', paddingTop: '16px', marginTop: '16px' }}>
-                    <h4 style={{ marginBottom: '4px', color: '#333' }}>Quick Reference Steps</h4>
-                    <p style={{ fontSize: '0.8rem', color: '#666', marginBottom: '16px' }}>
-                      Short, timed steps for prep sheets and at-a-glance reference. Keep each step brief.
-                    </p>
-
-                    <div className="form-group">
-                      <label className="form-label">
-                        Step-by-Step Process
-                        <button
-                          className="btn btn-small btn-secondary"
-                          onClick={addStep}
-                          style={{ marginLeft: '16px' }}
-                        >
-                          + Add Step
-                        </button>
-                      </label>
-                    {editSteps.map((step, i) => (
-                      <div key={i} className="step-row">
-                        <span className="step-number">{step.order}.</span>
-                        <textarea
-                          className="form-textarea"
-                          placeholder="Instruction"
-                          value={step.instruction}
-                          onChange={(e) => updateStep(i, 'instruction', e.target.value)}
-                          rows={2}
-                          style={{ flex: 3 }}
-                        />
-                        <input
-                          type="number"
-                          className="form-input"
-                          placeholder="Min"
-                          value={step.duration_minutes || ''}
+                          value={ing.quantity || ''}
                           onChange={(e) =>
-                            updateStep(i, 'duration_minutes', parseInt(e.target.value) || 0)
+                            updateIngredient(i, 'quantity', parseFloat(e.target.value) || 0)
                           }
-                          style={{ width: '60px' }}
                         />
-                        <button
-                          className="btn btn-small btn-danger"
-                          onClick={() => removeStep(i)}
+                        <div className="ingredient-unit">{ing.unit}</div>
+                        <div className="ingredient-cost">
+                          {ing.cost_per_unit
+                            ? `$${(ing.quantity * ing.cost_per_unit).toFixed(2)}`
+                            : '-'}
+                        </div>
+                        <select
+                          className="ingredient-phase-select"
+                          value={ing.phase || 'base'}
+                          onChange={(e) =>
+                            updateIngredient(i, 'phase', e.target.value as Ingredient['phase'])
+                          }
                         >
+                          {INGREDIENT_PHASES.map((phase) => (
+                            <option key={phase} value={phase}>
+                              {phase.charAt(0).toUpperCase() + phase.slice(1)}
+                            </option>
+                          ))}
+                        </select>
+                        <button className="ingredient-remove" onClick={() => removeIngredient(i)}>
                           ×
                         </button>
                       </div>
                     ))}
+
+                    {/* Add Ingredient Button */}
+                    <button
+                      className="btn btn-secondary"
+                      onClick={addIngredient}
+                      style={{ marginTop: '4px', width: '100%' }}
+                    >
+                      + Add Ingredient
+                    </button>
+
+                    {/* Inline New Ingredient Form */}
+                    {showInlineForm && (
+                      <div className="inline-ingredient-form">
+                        <h4>Add New Ingredient to Library</h4>
+                        <div className="inline-form-row">
+                          <div className="form-group">
+                            <label className="form-label">Name</label>
+                            <input
+                              type="text"
+                              className="form-input"
+                              value={newIngredient.name}
+                              onChange={(e) =>
+                                setNewIngredient({ ...newIngredient, name: e.target.value })
+                              }
+                              placeholder="e.g., Flour"
+                            />
+                          </div>
+                          <div className="form-group">
+                            <label className="form-label">Unit</label>
+                            <select
+                              className="form-select"
+                              value={newIngredient.unit}
+                              onChange={(e) =>
+                                setNewIngredient({ ...newIngredient, unit: e.target.value })
+                              }
+                            >
+                              <option value="g">g</option>
+                              <option value="ml">ml</option>
+                              <option value="tsp">tsp</option>
+                              <option value="tbsp">tbsp</option>
+                              <option value="each">each</option>
+                            </select>
+                          </div>
+                          <div className="form-group">
+                            <label className="form-label">Package Price ($)</label>
+                            <input
+                              type="number"
+                              className="form-input"
+                              step="0.01"
+                              value={newIngredient.package_price || ''}
+                              onChange={(e) =>
+                                setNewIngredient({
+                                  ...newIngredient,
+                                  package_price: parseFloat(e.target.value) || 0,
+                                })
+                              }
+                            />
+                          </div>
+                          <div className="form-group">
+                            <label className="form-label">Package Size</label>
+                            <input
+                              type="number"
+                              className="form-input"
+                              value={newIngredient.package_size || ''}
+                              onChange={(e) =>
+                                setNewIngredient({
+                                  ...newIngredient,
+                                  package_size: parseFloat(e.target.value) || 0,
+                                })
+                              }
+                              placeholder="e.g., 1000"
+                            />
+                          </div>
+                        </div>
+                        <div className="inline-form-row">
+                          <div className="form-group">
+                            <label className="form-label">Vendor</label>
+                            <input
+                              type="text"
+                              className="form-input"
+                              value={newIngredient.vendor}
+                              onChange={(e) =>
+                                setNewIngredient({ ...newIngredient, vendor: e.target.value })
+                              }
+                              placeholder="e.g., Costco"
+                            />
+                          </div>
+                          <div className="form-group">
+                            <label className="form-label">Category</label>
+                            <select
+                              className="form-select"
+                              value={newIngredient.category}
+                              onChange={(e) =>
+                                setNewIngredient({ ...newIngredient, category: e.target.value })
+                              }
+                            >
+                              <option value="base">Base</option>
+                              <option value="sweetener">Sweetener</option>
+                              <option value="spice">Spice</option>
+                              <option value="misc">Misc</option>
+                            </select>
+                          </div>
+                        </div>
+                        <div className="inline-form-buttons">
+                          <button
+                            className="btn btn-secondary"
+                            onClick={() => setShowInlineForm(false)}
+                          >
+                            Cancel
+                          </button>
+                          <button className="btn btn-primary" onClick={saveNewIngredient}>
+                            Save Ingredient
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Ingredient Cost Total */}
+                    {editIngredients.length > 0 && (
+                      <div style={{ marginTop: '12px', fontWeight: 500 }}>
+                        Ingredient Cost: ${calculateTotalCost(editIngredients).toFixed(2)}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Steps Section */}
+                  <div
+                    style={{ borderTop: '1px solid #e0e0e0', paddingTop: '16px', marginTop: '16px' }}
+                  >
+                    <div className="form-group">
+                      <label className="form-label">Process Steps</label>
+                      <p style={{ fontSize: '0.8rem', color: '#666', marginBottom: '12px' }}>
+                        Drag to reorder. Assign phases for organization.
+                      </p>
+
+                      {/* Time Breakdown Display */}
+                      {editSteps.length > 0 && (
+                        <div className="time-breakdown">
+                          <div className="time-item">
+                            <span className="time-label">Pre-Bake:</span>
+                            <span className="time-value">{formatMinutes(calculatePreBakeTime(editSteps))}</span>
+                          </div>
+                          <div className="time-item">
+                            <span className="time-label">Bake:</span>
+                            <span className="time-value">{formatMinutes(calculateBakeTime(editSteps))}</span>
+                          </div>
+                          <div className="time-item time-total">
+                            <span className="time-label">Total:</span>
+                            <span className="time-value">{formatTotalTime(editSteps)}</span>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Column Headers */}
+                      {editSteps.length > 0 && (
+                        <div className="step-header">
+                          <span style={{ width: '32px' }}></span>
+                          <span style={{ width: '28px' }}>#</span>
+                          <span style={{ flex: 1 }}>Phase / Instruction</span>
+                          <span style={{ width: '80px', textAlign: 'center' }}>Duration</span>
+                          <span style={{ width: '40px' }}></span>
+                        </div>
+                      )}
+
+                      <DndContext
+                        sensors={sensors}
+                        collisionDetection={closestCenter}
+                        onDragEnd={handleDragEnd}
+                      >
+                        <SortableContext
+                          items={editSteps.map((s) => s.id)}
+                          strategy={verticalListSortingStrategy}
+                        >
+                          {editSteps.map((step, i) => (
+                            <SortableStep
+                              key={step.id}
+                              step={step}
+                              index={i}
+                              onUpdate={updateStep}
+                              onRemove={removeStep}
+                            />
+                          ))}
+                        </SortableContext>
+                      </DndContext>
+
+                      {/* Add Step Button */}
+                      <button
+                        className="btn btn-secondary"
+                        onClick={addStep}
+                        style={{ marginTop: '8px', width: '100%' }}
+                      >
+                        + Add Step
+                      </button>
                     </div>
                   </div>
 
@@ -685,31 +1072,6 @@ function RecipesPage() {
         .step-time {
           color: var(--text-gray);
           font-size: 0.875rem;
-        }
-        .step-notes {
-          color: var(--text-gray);
-          font-size: 0.875rem;
-          font-style: italic;
-          margin-top: 4px;
-        }
-        .ingredient-row, .step-row {
-          display: flex;
-          gap: 8px;
-          align-items: flex-start;
-          margin-bottom: 8px;
-        }
-        .step-number {
-          font-weight: 600;
-          color: var(--primary-green);
-          min-width: 24px;
-          padding-top: 8px;
-        }
-        .instructions-text {
-          white-space: pre-wrap;
-          background: var(--light-gray);
-          padding: 12px;
-          border-radius: 6px;
-          line-height: 1.6;
         }
       `}</style>
     </div>

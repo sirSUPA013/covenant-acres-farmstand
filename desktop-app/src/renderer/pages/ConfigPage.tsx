@@ -6,6 +6,7 @@ interface BakeSlot {
   date: string;
   location_id: string;
   location_name: string;
+  locations: Array<{ id: string; name: string }>;
   total_capacity: number;
   current_orders: number;
   cutoff_time: string;
@@ -92,7 +93,7 @@ function ConfigPage() {
   const [showNewSlot, setShowNewSlot] = useState(false);
   const [newSlot, setNewSlot] = useState({
     date: '',
-    locationId: '',
+    locationIds: [] as string[],
     totalCapacity: 24,
     cutoffTime: '',
   });
@@ -251,21 +252,33 @@ function ConfigPage() {
   }
 
   async function createBakeSlot() {
-    if (!newSlot.date || !newSlot.locationId) return;
+    if (!newSlot.date || newSlot.locationIds.length === 0) return;
 
     try {
       await window.api.createBakeSlot({
         date: newSlot.date,
-        locationId: newSlot.locationId,
+        locationIds: newSlot.locationIds,
         totalCapacity: newSlot.totalCapacity,
         cutoffTime: newSlot.cutoffTime || new Date(new Date(newSlot.date).getTime() - 48 * 60 * 60 * 1000).toISOString(),
       });
       setShowNewSlot(false);
-      setNewSlot({ date: '', locationId: '', totalCapacity: 24, cutoffTime: '' });
+      setNewSlot({ date: '', locationIds: [], totalCapacity: 24, cutoffTime: '' });
       loadAll();
     } catch (error) {
       console.error('Failed to create bake slot:', error);
     }
+  }
+
+  function toggleLocationSelection(locationId: string) {
+    setNewSlot(prev => {
+      const isSelected = prev.locationIds.includes(locationId);
+      return {
+        ...prev,
+        locationIds: isSelected
+          ? prev.locationIds.filter(id => id !== locationId)
+          : [...prev.locationIds, locationId],
+      };
+    });
   }
 
   async function toggleSlot(slotId: string, isOpen: boolean) {
@@ -441,7 +454,7 @@ function ConfigPage() {
 
   function openNewSlotForDate(date: Date) {
     const dateStr = date.toISOString().split('T')[0];
-    setNewSlot({ ...newSlot, date: dateStr });
+    setNewSlot({ ...newSlot, date: dateStr, locationIds: [] });
     setShowNewSlot(true);
   }
 
@@ -978,19 +991,37 @@ function ConfigPage() {
                 />
               </div>
               <div className="form-group">
-                <label className="form-label">Location</label>
-                <select
-                  className="form-select"
-                  value={newSlot.locationId}
-                  onChange={(e) => setNewSlot({ ...newSlot, locationId: e.target.value })}
-                >
-                  <option value="">Select a location</option>
-                  {locations.map((loc) => (
-                    <option key={loc.id} value={loc.id}>
-                      {loc.name}
-                    </option>
+                <label className="form-label">Pickup Locations</label>
+                <p style={{ fontSize: '0.85rem', color: '#666', marginBottom: '8px' }}>
+                  Select all locations where customers can pick up on this day
+                </p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {locations.filter(loc => loc.is_active).map((loc) => (
+                    <label
+                      key={loc.id}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        padding: '8px 12px',
+                        backgroundColor: newSlot.locationIds.includes(loc.id) ? '#e8f5e9' : '#f5f5f5',
+                        borderRadius: '6px',
+                        cursor: 'pointer',
+                        border: newSlot.locationIds.includes(loc.id) ? '1px solid #4caf50' : '1px solid transparent',
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={newSlot.locationIds.includes(loc.id)}
+                        onChange={() => toggleLocationSelection(loc.id)}
+                        style={{ width: '18px', height: '18px' }}
+                      />
+                      <span style={{ fontWeight: newSlot.locationIds.includes(loc.id) ? '600' : '400' }}>
+                        {loc.name}
+                      </span>
+                    </label>
                   ))}
-                </select>
+                </div>
               </div>
               <div className="form-group">
                 <label className="form-label">Capacity (loaves)</label>
@@ -1012,7 +1043,7 @@ function ConfigPage() {
               <button
                 className="btn btn-primary"
                 onClick={createBakeSlot}
-                disabled={!newSlot.date || !newSlot.locationId}
+                disabled={!newSlot.date || newSlot.locationIds.length === 0}
               >
                 Create
               </button>

@@ -1,8 +1,6 @@
 /**
- * API: GET /api/bake-slots
- * Returns available bake slots from Google Sheets
- *
- * Self-contained to avoid Vercel module import issues
+ * API: GET /api/customer-history?email=xxx
+ * Returns customer info and order history for returning customers
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -100,29 +98,33 @@ async function readSheet(sheetName: string): Promise<string[][]> {
 
 // ============ Data Types ============
 
-// Matches actual sheet column names
+interface CustomerRow {
+  id: string;
+  first_name: string;
+  last_name: string;
+  email: string;
+  phone: string;
+}
+
+interface OrderRow {
+  id: string;
+  customer_id: string;
+  bake_slot_id: string;
+  pickup_location_id: string;
+  items: string;
+  total_amount: string;
+  status: string;
+  created_at: string;
+}
+
 interface BakeSlotRow {
   id: string;
   date: string;
-  location_id: string;
-  total_capacity: string;
-  current_orders: string;
-  cutoff_time: string;
-  is_open: string;
-}
-
-interface BakeSlotLocationRow {
-  id: string;
-  bake_slot_id: string;
-  location_id: string;
 }
 
 interface LocationRow {
   id: string;
   name: string;
-  address: string;
-  description: string;
-  is_active: string;
 }
 
 function parseRows<T>(rows: string[][]): T[] {
@@ -155,97 +157,83 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  // Get optional locationId filter from query params
-  const locationIdFilter = req.query.locationId as string | undefined;
+  const email = req.query.email as string;
+  if (!email) {
+    return res.status(400).json({ error: 'Email is required' });
+  }
 
   try {
     // Fetch all needed sheets
-    const [slotRows, locationRows, slotLocationRows] = await Promise.all([
+    const [customerRows, orderRows, slotRows, locationRows] = await Promise.all([
+      readSheet('Customers'),
+      readSheet('Orders'),
       readSheet('BakeSlots'),
       readSheet('Locations'),
-      readSheet('BakeSlotLocations'),
     ]);
 
+    const customers = parseRows<CustomerRow>(customerRows);
+    const orders = parseRows<OrderRow>(orderRows);
     const slots = parseRows<BakeSlotRow>(slotRows);
     const locations = parseRows<LocationRow>(locationRows);
-    const slotLocations = parseRows<BakeSlotLocationRow>(slotLocationRows);
 
-    // Create location lookup map
-    const locationMap = new Map(locations.map(loc => [loc.id, loc.name]));
+    // Find customer by email (case-insensitive)
+    const customer = customers.find(c => c.email.toLowerCase() === email.toLowerCase());
 
-    // Create a map of bake_slot_id -> location_ids[]
-    const slotToLocationsMap = new Map<string, string[]>();
-    for (const sl of slotLocations) {
-      const existing = slotToLocationsMap.get(sl.bake_slot_id) || [];
-      existing.push(sl.location_id);
-      slotToLocationsMap.set(sl.bake_slot_id, existing);
+    if (!customer) {
+      return res.status(200).json({
+        found: false,
+        customer: null,
+        orders: [],
+      });
     }
 
-    const now = new Date();
+    // Create lookup maps
+    const slotMap = new Map(slots.map(s => [s.id, s.date]));
+    const locationMap = new Map(locations.map(l => [l.id, l.name]));
 
-    // Filter and transform for public consumption
-    const availableSlots = slots
-      .filter(slot => {
-        // Only show open slots (is_open = "1" or "TRUE")
-        if (slot.is_open !== '1' && slot.is_open !== 'TRUE') return false;
-
-        // Only show future slots
-        const slotDate = new Date(slot.date);
-        if (slotDate < now) return false;
-
-        // Only show slots before cutoff
-        if (slot.cutoff_time) {
-          const cutoff = new Date(slot.cutoff_time);
-          if (cutoff < now) return false;
+    // Get customer's orders, sorted by date (newest first)
+    const customerOrders = orders
+      .filter(o => o.customer_id === customer.id)
+      .map(o => {
+        let items: Array<{ flavorName: string; quantity: number; totalPrice: number }> = [];
+        try {
+          items = JSON.parse(o.items || '[]');
+        } catch {
+          items = [];
         }
-
-        // If filtering by location, check if this slot has that location
-        if (locationIdFilter) {
-          const slotLocationIds = slotToLocationsMap.get(slot.id) || [];
-          // Fall back to legacy location_id if no junction table entries
-          if (slotLocationIds.length === 0 && slot.location_id) {
-            slotLocationIds.push(slot.location_id);
-          }
-          if (!slotLocationIds.includes(locationIdFilter)) {
-            return false;
-          }
-        }
-
-        return true;
-      })
-      .map(slot => {
-        const total = parseInt(slot.total_capacity) || 0;
-        const current = parseInt(slot.current_orders) || 0;
-        const remaining = Math.max(0, total - current);
-
-        // Get location names for this slot
-        const slotLocationIds = slotToLocationsMap.get(slot.id) || [];
-        // Fall back to legacy location_id
-        if (slotLocationIds.length === 0 && slot.location_id) {
-          slotLocationIds.push(slot.location_id);
-        }
-        const locationNames = slotLocationIds
-          .map(id => locationMap.get(id))
-          .filter(Boolean)
-          .join(', ') || 'Unknown Location';
 
         return {
-          id: slot.id,
-          date: slot.date,
-          locationName: locationNames,
-          spotsRemaining: remaining,
-          isOpen: remaining > 0,
+          id: o.id,
+          date: slotMap.get(o.bake_slot_id) || 'Unknown',
+          location: locationMap.get(o.pickup_location_id) || locationMap.get(o.bake_slot_id) || 'Unknown',
+          items: items.map(i => ({
+            name: i.flavorName,
+            quantity: i.quantity,
+            price: i.totalPrice,
+          })),
+          total: parseFloat(o.total_amount) || 0,
+          status: o.status,
+          createdAt: o.created_at,
         };
       })
-      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .slice(0, 10); // Last 10 orders
 
-    return res.status(200).json(availableSlots);
+    return res.status(200).json({
+      found: true,
+      customer: {
+        firstName: customer.first_name,
+        lastName: customer.last_name,
+        phone: customer.phone,
+      },
+      orders: customerOrders,
+    });
   } catch (error) {
-    console.error('Error fetching bake slots:', error);
+    console.error('Error fetching customer history:', error);
     return res.status(500).json({
-      error: 'Failed to fetch bake slots',
+      error: 'Failed to fetch customer history',
       details: error instanceof Error ? error.message : 'Unknown error',
-      code: 'SYNC-203'
+      code: 'HIST-001'
     });
   }
 }

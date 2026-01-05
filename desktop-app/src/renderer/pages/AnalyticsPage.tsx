@@ -34,6 +34,21 @@ interface DateRange {
   endDate: Date;
 }
 
+interface ExtraProductionAnalytics {
+  sold: { count: number; quantity: number; revenue: number };
+  gifted: { count: number; quantity: number };
+  wasted: { count: number; quantity: number };
+  personal: { count: number; quantity: number };
+  totalLoaves: number;
+}
+
+interface ProfitPerHourData {
+  bakeSlots: { count: number; loaves: number; revenue: number; cogs: number; profit: number; timeMinutes: number };
+  extraProduction: { loaves: number; revenue: number; cogs: number; profit: number; timeMinutes: number };
+  totals: { loaves: number; revenue: number; cogs: number; profit: number; timeMinutes: number; timeHours: number; profitPerHour: number };
+  timeSettings: { bakeDaySetupMinutes: number; bakeDayPerLoafMinutes: number; bakeDayCleanupMinutes: number; miscProductionPerLoafMinutes: number };
+}
+
 function AnalyticsPage() {
   const [summary, setSummary] = useState<SalesSummary | null>(null);
   const [loading, setLoading] = useState(true);
@@ -42,6 +57,8 @@ function AnalyticsPage() {
   // Profitability data
   const [flavorProfits, setFlavorProfits] = useState<FlavorProfit[]>([]);
   const [bakeSlotProfits, setBakeSlotProfits] = useState<BakeSlotProfit[]>([]);
+  const [extraProduction, setExtraProduction] = useState<ExtraProductionAnalytics | null>(null);
+  const [profitPerHour, setProfitPerHour] = useState<ProfitPerHourData | null>(null);
   const [activeSection, setActiveSection] = useState<'sales' | 'profit'>('sales');
 
   const dateRanges: Record<string, DateRange> = {
@@ -80,7 +97,7 @@ function AnalyticsPage() {
     setLoading(true);
     try {
       const range = dateRanges[dateRange];
-      const [salesData, flavorProfitData, bakeSlotProfitData] = await Promise.all([
+      const [salesData, flavorProfitData, bakeSlotProfitData, extraProdData, profitPerHourData] = await Promise.all([
         window.api.getAnalytics({
           startDate: range.startDate.toISOString(),
           endDate: range.endDate.toISOString(),
@@ -90,10 +107,20 @@ function AnalyticsPage() {
           startDate: range.startDate.toISOString(),
           endDate: range.endDate.toISOString(),
         }),
+        window.api.getExtraProductionAnalytics({
+          startDate: range.startDate.toISOString().split('T')[0],
+          endDate: range.endDate.toISOString().split('T')[0],
+        }),
+        window.api.getProfitPerHour({
+          startDate: range.startDate.toISOString().split('T')[0],
+          endDate: range.endDate.toISOString().split('T')[0],
+        }),
       ]);
       setSummary(salesData as SalesSummary);
       setFlavorProfits(flavorProfitData as FlavorProfit[]);
       setBakeSlotProfits(bakeSlotProfitData as BakeSlotProfit[]);
+      setExtraProduction(extraProdData as ExtraProductionAnalytics);
+      setProfitPerHour(profitPerHourData as ProfitPerHourData);
     } catch (error) {
       console.error('Failed to load analytics:', error);
     }
@@ -303,6 +330,47 @@ function AnalyticsPage() {
                 </div>
               )}
             </div>
+
+            {/* Extra Production */}
+            <div className="card">
+              <div className="card-header">
+                <h2 className="card-title">Extra Production</h2>
+              </div>
+              {!extraProduction || extraProduction.totalLoaves === 0 ? (
+                <p className="text-gray">No extra production logged for this period</p>
+              ) : (
+                <div className="extra-production-stats">
+                  <div className="extra-stat-row sold">
+                    <div className="extra-stat-label">Walk-in Sales</div>
+                    <div className="extra-stat-values">
+                      <span className="extra-stat-qty">{extraProduction.sold.quantity} loaves</span>
+                      <span className="extra-stat-revenue">{formatCurrency(extraProduction.sold.revenue)}</span>
+                    </div>
+                  </div>
+                  <div className="extra-stat-row gifted">
+                    <div className="extra-stat-label">Gifted</div>
+                    <div className="extra-stat-values">
+                      <span className="extra-stat-qty">{extraProduction.gifted.quantity} loaves</span>
+                    </div>
+                  </div>
+                  <div className="extra-stat-row wasted">
+                    <div className="extra-stat-label">Wasted</div>
+                    <div className="extra-stat-values">
+                      <span className="extra-stat-qty">{extraProduction.wasted.quantity} loaves</span>
+                    </div>
+                  </div>
+                  <div className="extra-stat-row personal">
+                    <div className="extra-stat-label">Personal Use</div>
+                    <div className="extra-stat-values">
+                      <span className="extra-stat-qty">{extraProduction.personal.quantity} loaves</span>
+                    </div>
+                  </div>
+                  <div className="extra-stat-total">
+                    <span>Total Extra: {extraProduction.totalLoaves} loaves</span>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </>
         )
@@ -325,11 +393,64 @@ function AnalyticsPage() {
               </div>
               <div className="stat-label">Profit</div>
             </div>
-            <div className="stat-card">
-              <div className="stat-value">{avgMargin.toFixed(1)}%</div>
-              <div className="stat-label">Avg Margin</div>
+            <div className="stat-card highlight">
+              <div className="stat-value" style={{ color: profitPerHour && profitPerHour.totals.profitPerHour >= 0 ? 'var(--primary-green)' : '#c62828' }}>
+                {profitPerHour ? formatCurrency(profitPerHour.totals.profitPerHour) : '$0.00'}
+              </div>
+              <div className="stat-label">Profit / Hour</div>
             </div>
           </div>
+
+          {/* Profit Per Hour Breakdown */}
+          {profitPerHour && profitPerHour.totals.timeHours > 0 && (
+            <div className="card" style={{ marginBottom: '16px' }}>
+              <div className="card-header">
+                <h2 className="card-title">Time & Efficiency Breakdown</h2>
+              </div>
+              <div className="profit-hour-breakdown">
+                <div className="breakdown-row">
+                  <div className="breakdown-label">
+                    <strong>Bake Days</strong>
+                    <span className="breakdown-detail">{profitPerHour.bakeSlots.count} days, {profitPerHour.bakeSlots.loaves} loaves</span>
+                  </div>
+                  <div className="breakdown-values">
+                    <span>{(profitPerHour.bakeSlots.timeMinutes / 60).toFixed(1)} hrs</span>
+                    <span className="breakdown-profit" style={{ color: profitPerHour.bakeSlots.profit >= 0 ? 'var(--primary-green)' : '#c62828' }}>
+                      {formatCurrency(profitPerHour.bakeSlots.profit)}
+                    </span>
+                  </div>
+                </div>
+                <div className="breakdown-row">
+                  <div className="breakdown-label">
+                    <strong>Extra Production</strong>
+                    <span className="breakdown-detail">{profitPerHour.extraProduction.loaves} loaves</span>
+                  </div>
+                  <div className="breakdown-values">
+                    <span>{(profitPerHour.extraProduction.timeMinutes / 60).toFixed(1)} hrs</span>
+                    <span className="breakdown-profit" style={{ color: profitPerHour.extraProduction.profit >= 0 ? 'var(--primary-green)' : '#c62828' }}>
+                      {formatCurrency(profitPerHour.extraProduction.profit)}
+                    </span>
+                  </div>
+                </div>
+                <div className="breakdown-row total">
+                  <div className="breakdown-label">
+                    <strong>Total</strong>
+                    <span className="breakdown-detail">{profitPerHour.totals.loaves} loaves</span>
+                  </div>
+                  <div className="breakdown-values">
+                    <span><strong>{profitPerHour.totals.timeHours.toFixed(1)} hrs</strong></span>
+                    <span className="breakdown-profit" style={{ color: profitPerHour.totals.profit >= 0 ? 'var(--primary-green)' : '#c62828' }}>
+                      <strong>{formatCurrency(profitPerHour.totals.profit)}</strong>
+                    </span>
+                  </div>
+                </div>
+              </div>
+              <p style={{ fontSize: '0.8rem', color: '#666', marginTop: '12px', paddingTop: '12px', borderTop: '1px solid #e5e7eb' }}>
+                Time estimates: {profitPerHour.timeSettings.bakeDaySetupMinutes}m setup + {profitPerHour.timeSettings.bakeDayPerLoafMinutes}m/loaf + {profitPerHour.timeSettings.bakeDayCleanupMinutes}m cleanup per bake day, {profitPerHour.timeSettings.miscProductionPerLoafMinutes}m/loaf for misc production.
+                <a href="#" onClick={(e) => { e.preventDefault(); window.location.hash = '/settings'; }} style={{ marginLeft: '8px', color: 'var(--primary-green)' }}>Edit in Settings</a>
+              </p>
+            </div>
+          )}
 
           <div className="analytics-grid">
             {/* Profit by Flavor */}
@@ -518,6 +639,99 @@ function AnalyticsPage() {
         .status-count {
           font-weight: 600;
           color: var(--dark-gray);
+        }
+        .extra-production-stats {
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+        }
+        .extra-stat-row {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 10px 12px;
+          border-radius: 6px;
+          background: #f9fafb;
+        }
+        .extra-stat-row.sold {
+          background: #f0fdf4;
+          border-left: 3px solid #22c55e;
+        }
+        .extra-stat-row.gifted {
+          background: #f0f9ff;
+          border-left: 3px solid #0ea5e9;
+        }
+        .extra-stat-row.wasted {
+          background: #fef2f2;
+          border-left: 3px solid #ef4444;
+        }
+        .extra-stat-row.personal {
+          background: #faf5ff;
+          border-left: 3px solid #8b5cf6;
+        }
+        .extra-stat-label {
+          font-weight: 500;
+          color: var(--text-dark);
+        }
+        .extra-stat-values {
+          display: flex;
+          gap: 16px;
+          align-items: center;
+        }
+        .extra-stat-qty {
+          color: var(--text-gray);
+          font-size: 0.875rem;
+        }
+        .extra-stat-revenue {
+          font-weight: 600;
+          color: var(--primary-green);
+        }
+        .extra-stat-total {
+          margin-top: 8px;
+          padding-top: 12px;
+          border-top: 1px solid #e5e7eb;
+          font-weight: 600;
+          color: var(--text-dark);
+        }
+        .stat-card.highlight {
+          background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
+          border: 1px solid var(--primary-green);
+        }
+        .profit-hour-breakdown {
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+        }
+        .breakdown-row {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 12px;
+          background: #f9fafb;
+          border-radius: 6px;
+        }
+        .breakdown-row.total {
+          background: #f0fdf4;
+          border: 1px solid var(--primary-green);
+        }
+        .breakdown-label {
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+        }
+        .breakdown-detail {
+          font-size: 0.8rem;
+          color: #666;
+        }
+        .breakdown-values {
+          display: flex;
+          gap: 24px;
+          align-items: center;
+        }
+        .breakdown-profit {
+          min-width: 80px;
+          text-align: right;
+          font-weight: 600;
         }
       `}</style>
     </div>

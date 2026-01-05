@@ -3,7 +3,7 @@
  * Main application logic
  */
 
-import { OrderItem, BakeSlotSummary, FlavorSummary } from './types';
+import { OrderItem, BakeSlotSummary, FlavorSummary, LocationSummary } from './types';
 import { sheetsApi } from './api/sheets';
 import {
   validateEmail,
@@ -17,7 +17,9 @@ import { formatDate } from './utils/dates';
 // State
 interface AppState {
   currentStep: number;
+  selectedLocation: LocationSummary | null;
   selectedSlot: BakeSlotSummary | null;
+  availableLocations: LocationSummary[];
   availableSlots: BakeSlotSummary[];
   availableFlavors: FlavorSummary[];
   orderItems: Map<string, OrderItem>;
@@ -35,7 +37,9 @@ interface AppState {
 
 const state: AppState = {
   currentStep: 1,
+  selectedLocation: null,
   selectedSlot: null,
+  availableLocations: [],
   availableSlots: [],
   availableFlavors: [],
   orderItems: new Map(),
@@ -54,7 +58,7 @@ const state: AppState = {
 // Initialize
 document.addEventListener('DOMContentLoaded', async () => {
   try {
-    await loadBakeSlots();
+    await loadLocations();
     setupEventListeners();
   } catch (error) {
     showError('Failed to load order form. Please try again.', 'INIT-001');
@@ -62,18 +66,87 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 // API calls
-async function loadBakeSlots(): Promise<void> {
-  const slotsContainer = document.getElementById('bake-slots');
-  if (!slotsContainer) return;
+async function loadLocations(): Promise<void> {
+  const locationsContainer = document.getElementById('locations');
+  if (!locationsContainer) return;
 
   try {
-    state.availableSlots = await sheetsApi.getBakeSlots();
+    state.availableLocations = await sheetsApi.getLocations();
+
+    if (state.availableLocations.length === 0) {
+      locationsContainer.innerHTML = `
+        <div class="no-slots">
+          <p>No pickup locations are currently available.</p>
+          <p>Check back soon or follow us on social media for updates!</p>
+        </div>
+      `;
+      return;
+    }
+
+    locationsContainer.innerHTML = state.availableLocations
+      .map((location) => `
+        <div class="bake-slot-card"
+             data-location-id="${location.id}"
+             tabindex="0">
+          <div class="bake-slot-date">${location.name}</div>
+          ${location.address ? `<div class="bake-slot-location">${location.address}</div>` : ''}
+        </div>
+      `)
+      .join('');
+
+    // Add click handlers
+    locationsContainer.querySelectorAll('.bake-slot-card').forEach((card) => {
+      card.addEventListener('click', () => selectLocation(card as HTMLElement));
+      card.addEventListener('keypress', (e) => {
+        if ((e as KeyboardEvent).key === 'Enter') {
+          selectLocation(card as HTMLElement);
+        }
+      });
+    });
+  } catch (error) {
+    locationsContainer.innerHTML = `
+      <div class="error-loading">
+        <p>Unable to load pickup locations. Please refresh the page.</p>
+      </div>
+    `;
+    console.error('Failed to load locations:', error);
+  }
+}
+
+async function selectLocation(card: HTMLElement): Promise<void> {
+  const locationId = card.dataset.locationId;
+  if (!locationId) return;
+
+  // Update UI
+  document.querySelectorAll('#locations .bake-slot-card').forEach((c) => c.classList.remove('selected'));
+  card.classList.add('selected');
+
+  // Update state
+  state.selectedLocation = state.availableLocations.find((l) => l.id === locationId) || null;
+
+  // Load bake slots for this location
+  await loadBakeSlots();
+  goToStep(2);
+}
+
+async function loadBakeSlots(): Promise<void> {
+  const slotsContainer = document.getElementById('bake-slots');
+  if (!slotsContainer || !state.selectedLocation) return;
+
+  // Update location name in UI
+  const locationNameEl = document.getElementById('selected-location-name');
+  if (locationNameEl) {
+    locationNameEl.textContent = state.selectedLocation.name;
+  }
+
+  try {
+    state.availableSlots = await sheetsApi.getBakeSlotsByLocation(state.selectedLocation.id);
 
     if (state.availableSlots.length === 0) {
       slotsContainer.innerHTML = `
         <div class="no-slots">
-          <p>No bake days are currently available.</p>
-          <p>Check back soon or follow us on social media for updates!</p>
+          <p>No bake days are currently available at ${state.selectedLocation.name}.</p>
+          <p>Check back soon or try a different location!</p>
         </div>
       `;
       return;
@@ -98,7 +171,6 @@ async function loadBakeSlots(): Promise<void> {
              data-slot-id="${slot.id}"
              ${slot.spotsRemaining <= 0 ? '' : 'tabindex="0"'}>
           <div class="bake-slot-date">${formatDate(slot.date)}</div>
-          <div class="bake-slot-location">${slot.locationName}</div>
           <div class="bake-slot-availability ${availabilityClass}">${availabilityText}</div>
         </div>
       `;
@@ -129,7 +201,7 @@ async function selectBakeSlot(card: HTMLElement): Promise<void> {
   if (!slotId) return;
 
   // Update UI
-  document.querySelectorAll('.bake-slot-card').forEach((c) => c.classList.remove('selected'));
+  document.querySelectorAll('#bake-slots .bake-slot-card').forEach((c) => c.classList.remove('selected'));
   card.classList.add('selected');
 
   // Update state
@@ -140,7 +212,7 @@ async function selectBakeSlot(card: HTMLElement): Promise<void> {
     state.availableFlavors = await sheetsApi.getFlavorsForSlot(slotId);
     state.orderItems.clear();
     renderFlavors();
-    goToStep(2);
+    goToStep(3);
   } catch (error) {
     showError('Failed to load menu. Please try again.', 'LOAD-002');
   }
@@ -229,7 +301,7 @@ function updateQuantity(flavorId: string, delta: number): void {
 function updateOrderSummary(): void {
   const itemsContainer = document.getElementById('order-items');
   const totalElement = document.getElementById('order-total-amount');
-  const continueBtn = document.getElementById('to-step-3') as HTMLButtonElement;
+  const continueBtn = document.getElementById('to-step-4') as HTMLButtonElement;
 
   if (!itemsContainer || !totalElement || !continueBtn) return;
 
@@ -297,7 +369,7 @@ function goToStep(step: number): void {
   if (stepContent) stepContent.classList.add('active');
 
   // Prepare step content
-  if (step === 4) {
+  if (step === 5) {
     prepareConfirmation();
   }
 
@@ -308,20 +380,27 @@ function goToStep(step: number): void {
 function validateCurrentStep(): boolean {
   switch (state.currentStep) {
     case 1:
+      if (!state.selectedLocation) {
+        alert('Please select a pickup location.');
+        return false;
+      }
+      return true;
+
+    case 2:
       if (!state.selectedSlot) {
         alert('Please select a pickup date.');
         return false;
       }
       return true;
 
-    case 2:
+    case 3:
       if (state.orderItems.size === 0) {
         alert('Please add at least one item to your order.');
         return false;
       }
       return true;
 
-    case 3:
+    case 4:
       return validateCustomerForm();
 
     default:
@@ -342,11 +421,6 @@ function validateCustomerForm(): boolean {
   const email = (document.getElementById('email') as HTMLInputElement).value.trim();
   const phone = (document.getElementById('phone') as HTMLInputElement).value.trim();
   const notes = (document.getElementById('notes') as HTMLTextAreaElement).value.trim();
-  const notificationPref = (
-    document.querySelector('input[name="notificationPref"]:checked') as HTMLInputElement
-  )?.value as 'email' | 'sms' | 'both';
-  const smsOptIn = (document.getElementById('smsOptIn') as HTMLInputElement).checked;
-  const createAccount = (document.getElementById('createAccount') as HTMLInputElement).checked;
 
   // Validate email
   if (!validateEmail(email)) {
@@ -360,22 +434,16 @@ function validateCustomerForm(): boolean {
     return false;
   }
 
-  // Check SMS opt-in if SMS notifications selected
-  if ((notificationPref === 'sms' || notificationPref === 'both') && !smsOptIn) {
-    alert('Please agree to receive text messages to use SMS notifications.');
-    return false;
-  }
-
-  // Save to state
+  // Save to state (notification preferences not currently used)
   state.customer = {
     firstName,
     lastName,
     email,
     phone: normalizePhone(phone),
     notes,
-    notificationPref,
-    smsOptIn,
-    createAccount,
+    notificationPref: 'email',
+    smsOptIn: false,
+    createAccount: false,
   };
 
   return true;
@@ -384,10 +452,10 @@ function validateCustomerForm(): boolean {
 function prepareConfirmation(): void {
   // Pickup details
   const pickupEl = document.getElementById('confirm-pickup');
-  if (pickupEl && state.selectedSlot) {
+  if (pickupEl && state.selectedSlot && state.selectedLocation) {
     pickupEl.innerHTML = `
       <strong>${formatDate(state.selectedSlot.date)}</strong><br />
-      ${state.selectedSlot.locationName}
+      ${state.selectedLocation.name}
     `;
   }
 
@@ -422,6 +490,83 @@ function prepareConfirmation(): void {
   }
 }
 
+async function loadPaymentOptions(total: number, orderId: string): Promise<void> {
+  try {
+    const paymentData = await sheetsApi.getPaymentOptions();
+
+    if (!paymentData.enabled || paymentData.options.length === 0) {
+      return;
+    }
+
+    const paymentOptionsEl = document.getElementById('payment-options');
+    const paymentTotalEl = document.getElementById('payment-total');
+    const paymentLinksEl = document.getElementById('payment-links');
+
+    if (!paymentOptionsEl || !paymentLinksEl) return;
+
+    // Show the payment section
+    paymentOptionsEl.style.display = 'block';
+
+    // Set the total
+    if (paymentTotalEl) {
+      paymentTotalEl.textContent = `$${total.toFixed(2)}`;
+    }
+
+    // Build payment links
+    const orderNum = orderId.split('-')[0].toUpperCase();
+    paymentLinksEl.innerHTML = paymentData.options
+      .map((option) => {
+        const icon = getPaymentIcon(option.type);
+        if (option.link) {
+          // Add amount to link where supported
+          let link = option.link;
+          if (option.type === 'venmo') {
+            link = `${option.link}?txn=pay&amount=${total.toFixed(2)}&note=Order%20${orderNum}`;
+          } else if (option.type === 'paypal') {
+            link = `${option.link}/${total.toFixed(2)}`;
+          } else if (option.type === 'cashapp') {
+            link = `${option.link}/${total.toFixed(2)}`;
+          }
+          return `
+            <a href="${link}" target="_blank" rel="noopener" class="payment-link">
+              <span class="payment-icon">${icon}</span>
+              <span class="payment-label">${option.label}</span>
+              <span class="payment-value">${option.value}</span>
+            </a>
+          `;
+        } else {
+          // No link (like Zelle) - just show the info
+          return `
+            <div class="payment-link payment-link-static">
+              <span class="payment-icon">${icon}</span>
+              <span class="payment-label">${option.label}</span>
+              <span class="payment-value">${option.value}</span>
+            </div>
+          `;
+        }
+      })
+      .join('');
+  } catch (error) {
+    console.error('Failed to load payment options:', error);
+    // Silently fail - payment options are optional
+  }
+}
+
+function getPaymentIcon(type: string): string {
+  switch (type) {
+    case 'venmo':
+      return '💳';
+    case 'cashapp':
+      return '💵';
+    case 'paypal':
+      return '🅿️';
+    case 'zelle':
+      return '🏦';
+    default:
+      return '💰';
+  }
+}
+
 async function submitOrder(): Promise<void> {
   const submitBtn = document.getElementById('submit-order') as HTMLButtonElement;
   submitBtn.disabled = true;
@@ -435,6 +580,7 @@ async function submitOrder(): Promise<void> {
       id: generateId(),
       customerId: generateId(),
       bakeSlotId: state.selectedSlot!.id,
+      pickupLocationId: state.selectedLocation!.id,
       items,
       totalAmount: total,
       status: 'submitted' as const,
@@ -459,9 +605,12 @@ async function submitOrder(): Promise<void> {
     if (successDetails) {
       successDetails.innerHTML = `
         <p><strong>Order #${order.id.split('-')[0].toUpperCase()}</strong></p>
-        <p>Pickup: ${formatDate(state.selectedSlot!.date)} at ${state.selectedSlot!.locationName}</p>
+        <p>Pickup: ${formatDate(state.selectedSlot!.date)} at ${state.selectedLocation!.name}</p>
       `;
     }
+
+    // Load and display payment options
+    loadPaymentOptions(total, order.id);
   } catch (error) {
     console.error('Order submission failed:', error);
     const err = error as Error & { code?: string };
@@ -496,6 +645,7 @@ function showError(message: string, code: string): void {
 function startNewOrder(): void {
   // Reset state
   state.currentStep = 1;
+  state.selectedLocation = null;
   state.selectedSlot = null;
   state.orderItems.clear();
   state.customer = {
@@ -519,27 +669,87 @@ function startNewOrder(): void {
   document.getElementById('step-1')?.classList.add('active');
 
   // Reload data
-  loadBakeSlots();
+  loadLocations();
+}
+
+async function checkReturningCustomer(email: string): Promise<void> {
+  if (!validateEmail(email)) return;
+
+  try {
+    const history = await sheetsApi.getCustomerHistory(email);
+
+    const historyContainer = document.getElementById('order-history');
+    const customerNameEl = document.getElementById('returning-customer-name');
+    const historyListEl = document.getElementById('history-list');
+
+    if (!historyContainer || !customerNameEl || !historyListEl) return;
+
+    if (history.found && history.customer) {
+      // Pre-fill customer info
+      const firstNameInput = document.getElementById('firstName') as HTMLInputElement;
+      const lastNameInput = document.getElementById('lastName') as HTMLInputElement;
+      const phoneInput = document.getElementById('phone') as HTMLInputElement;
+
+      if (firstNameInput && !firstNameInput.value) {
+        firstNameInput.value = history.customer.firstName;
+      }
+      if (lastNameInput && !lastNameInput.value) {
+        lastNameInput.value = history.customer.lastName;
+      }
+      if (phoneInput && !phoneInput.value) {
+        phoneInput.value = formatPhone(history.customer.phone);
+      }
+
+      // Show welcome message
+      customerNameEl.textContent = history.customer.firstName;
+      historyContainer.style.display = 'block';
+
+      // Populate order history
+      if (history.orders.length > 0) {
+        historyListEl.innerHTML = history.orders
+          .map((order) => {
+            const itemsText = order.items.map((i) => `${i.name} × ${i.quantity}`).join(', ');
+            return `
+              <div class="history-order">
+                <div class="history-order-header">
+                  <span class="history-order-date">${formatDate(order.date)}</span>
+                  <span class="history-order-total">$${order.total.toFixed(2)}</span>
+                </div>
+                <div class="history-order-items">${itemsText}</div>
+                <div class="history-order-location">📍 ${order.location}</div>
+              </div>
+            `;
+          })
+          .join('');
+      } else {
+        historyListEl.innerHTML = '<p>No previous orders found.</p>';
+      }
+    } else {
+      historyContainer.style.display = 'none';
+    }
+  } catch (error) {
+    console.error('Error checking customer history:', error);
+    // Silently fail - not critical
+  }
 }
 
 function setupEventListeners(): void {
-  // SMS consent visibility
-  document.querySelectorAll('input[name="notificationPref"]').forEach((input) => {
-    input.addEventListener('change', (e) => {
-      const value = (e.target as HTMLInputElement).value;
-      const smsConsent = document.getElementById('sms-consent');
-      if (smsConsent) {
-        smsConsent.style.display = value === 'sms' || value === 'both' ? 'block' : 'none';
-      }
-    });
-  });
-
   // Phone formatting
   const phoneInput = document.getElementById('phone') as HTMLInputElement;
   if (phoneInput) {
     phoneInput.addEventListener('blur', () => {
       if (validatePhone(phoneInput.value)) {
         phoneInput.value = formatPhone(phoneInput.value);
+      }
+    });
+  }
+
+  // Email lookup for returning customers
+  const emailInput = document.getElementById('email') as HTMLInputElement;
+  if (emailInput) {
+    emailInput.addEventListener('blur', () => {
+      if (emailInput.value) {
+        checkReturningCustomer(emailInput.value);
       }
     });
   }

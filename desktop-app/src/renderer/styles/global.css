@@ -782,3 +782,394 @@ body {
 .dev-toggle:hover {
   opacity: 1;
 }
+
+/* ============================================
+   Recipe Editor - Drag and Drop
+   ============================================ */
+
+.drag-handle {
+  cursor: grab;
+  padding: 8px;
+  color: var(--text-gray);
+  font-size: 1.2rem;
+  user-select: none;
+  display: flex;
+  align-items: center;
+}
+
+.drag-handle:active {
+  cursor: grabbing;
+}
+
+.step-row.dragging {
+  opacity: 0.5;
+  background: var(--light-gray);
+}
+
+/* Phase Badges */
+.phase-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  text-transform: capitalize;
+}
+
+.phase-setup { background: #e3f2fd; color: #1565c0; }
+.phase-mix { background: #f3e5f5; color: #7b1fa2; }
+.phase-bulk { background: #fff3e0; color: #ef6c00; }
+.phase-shape { background: #e8f5e9; color: #2e7d32; }
+.phase-proof { background: #fce4ec; color: #c2185b; }
+.phase-bake { background: #ffebee; color: #c62828; }
+.phase-cool { background: #e0f7fa; color: #00838f; }
+
+/* Ingredient phases */
+.phase-base { background: #e8f5e9; color: #2e7d32; }
+.phase-fold { background: #fff3e0; color: #ef6c00; }
+.phase-lamination { background: #fce4ec; color: #c2185b; }
+
+/* Time Breakdown Display */
+.time-breakdown {
+  display: flex;
+  gap: 16px;
+  padding: 10px 14px;
+  background: var(--light-gray);
+  border-radius: 6px;
+  margin-bottom: var(--spacing-md);
+}
+
+.time-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.time-label {
+  font-weight: 500;
+  color: var(--text-gray);
+  font-size: 0.875rem;
+}
+
+.time-value {
+  font-size: 1rem;
+  color: var(--text-dark);
+  font-weight: 500;
+}
+
+.time-total {
+  border-left: 1px solid var(--medium-gray);
+  padding-left: 16px;
+}
+
+.time-total .time-value {
+  color: var(--primary-green);
+  font-weight: 600;
+  font-size: 1.1rem;
+}
+
+/* ============================================
+   Recipe Editor - Searchable Dropdown
+   ============================================ */
+
+.ingredient-dropdown {
+  position: relative;
+  flex: 2;
+}
+
+.ingredient-dropdown-input {
+  width: 100%;
+  padding: var(--spacing-sm) var(--spacing-md);
+  border: 1px solid var(--medium-gray);
+  border-radius: 6px;
+  font-size: 0.9rem;
+  font-family: var(--font-body);
+}
+
+.ingredient-dropdown-input:focus {
+  outline: none;
+  border-color: var(--primary-green);
+}
+
+.ingredient-dropdown-list {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  max-height: 200px;
+  overflow-y: auto;
+  background: var(--white);
+  border: 1px solid var(--medium-gray);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  z-index: 100;
+  margin-top: 2px;
+}
+
+.ingredient-dropdown-item {
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.ingredient-dropdown-item:hover {
+  background: var(--light-gray);
+}
+
+.ingredient-dropdown-item.selected {
+  background: rgba(77, 99, 39, 0.1);
+}
+
+.ingredient-dropdown-item.add-new {
+  border-top: 1px solid var(--medium-gray);
+  color: var(--primary-green);
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ingredient-dropdown-item.add-new:hover {
+  background: rgba(77, 99, 39, 0.1);
+}
+
+.ingredient-dropdown-item .ingredient-detail {
+  font-size: 0.75rem;
+  color: var(--text-gray);
+  margin-left: 8px;
+}
+
+/* Inline Ingredient Form */
+.inline-ingredient-form {
+  background: var(--light-gray);
+  border: 1px solid var(--medium-gray);
+  border-radius: 8px;
+  padding: var(--spacing-md);
+  margin-top: var(--spacing-sm);
+  margin-bottom: var(--spacing-md);
+}
+
+.inline-ingredient-form h4 {
+  margin-bottom: var(--spacing-md);
+  color: var(--primary-green);
+  font-size: 0.95rem;
+}
+
+.inline-form-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: var(--spacing-sm);
+  margin-bottom: var(--spacing-sm);
+}
+
+.inline-form-row .form-group {
+  margin-bottom: 0;
+}
+
+.inline-form-row .form-label {
+  font-size: 0.8rem;
+  margin-bottom: 2px;
+}
+
+.inline-form-row .form-input,
+.inline-form-row .form-select {
+  padding: 6px 10px;
+  font-size: 0.85rem;
+}
+
+.inline-form-buttons {
+  display: flex;
+  gap: var(--spacing-sm);
+  justify-content: flex-end;
+  margin-top: var(--spacing-md);
+}
+
+/* ============================================
+   Recipe Editor - Step Row
+   ============================================ */
+
+.step-header {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 0 8px 8px 8px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-gray);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.step-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin-bottom: 12px;
+  padding: 8px;
+  background: var(--white);
+  border: 1px solid var(--medium-gray);
+  border-radius: 6px;
+  transition: box-shadow 0.2s ease;
+}
+
+.step-row:hover {
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+}
+
+.step-number {
+  font-weight: 600;
+  color: var(--primary-green);
+  min-width: 28px;
+  padding-top: 10px;
+  text-align: center;
+}
+
+.step-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.step-header {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.step-phase-select {
+  padding: 4px 8px;
+  font-size: 0.8rem;
+  border-radius: 4px;
+  border: 1px solid var(--medium-gray);
+  min-width: 110px;
+}
+
+.step-duration {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.85rem;
+}
+
+.step-duration input {
+  width: 60px;
+  padding: 4px 8px;
+  font-size: 0.85rem;
+  border: 1px solid var(--medium-gray);
+  border-radius: 4px;
+  text-align: center;
+}
+
+.step-duration span {
+  color: var(--text-gray);
+}
+
+.step-instruction {
+  width: 100%;
+  min-height: 80px;
+  padding: 8px 10px;
+  border: 1px solid var(--medium-gray);
+  border-radius: 4px;
+  font-family: var(--font-body);
+  font-size: 0.9rem;
+  resize: vertical;
+}
+
+.step-instruction:focus {
+  outline: none;
+  border-color: var(--primary-green);
+}
+
+.step-remove {
+  padding: 6px 10px;
+  background: none;
+  border: 1px solid var(--medium-gray);
+  border-radius: 4px;
+  color: var(--text-gray);
+  cursor: pointer;
+  font-size: 1rem;
+  transition: all 0.15s;
+}
+
+.step-remove:hover {
+  background: #ffebee;
+  border-color: var(--error);
+  color: var(--error);
+}
+
+/* ============================================
+   Recipe Editor - Ingredient Row
+   ============================================ */
+
+.ingredient-header {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 0 8px 8px 8px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-gray);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.ingredient-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+  padding: 8px;
+  background: var(--white);
+  border: 1px solid var(--medium-gray);
+  border-radius: 6px;
+}
+
+.ingredient-qty {
+  width: 70px;
+}
+
+.ingredient-unit {
+  min-width: 60px;
+  padding: 6px 8px;
+  font-size: 0.85rem;
+  background: var(--light-gray);
+  border: 1px solid var(--medium-gray);
+  border-radius: 4px;
+  text-align: center;
+}
+
+.ingredient-cost {
+  min-width: 70px;
+  padding: 6px 8px;
+  font-size: 0.85rem;
+  background: var(--light-gray);
+  border: 1px solid var(--medium-gray);
+  border-radius: 4px;
+  text-align: right;
+  color: var(--text-gray);
+}
+
+.ingredient-phase-select {
+  padding: 6px 8px;
+  font-size: 0.8rem;
+  border-radius: 4px;
+  border: 1px solid var(--medium-gray);
+  min-width: 100px;
+}
+
+.ingredient-remove {
+  padding: 6px 10px;
+  background: none;
+  border: 1px solid var(--medium-gray);
+  border-radius: 4px;
+  color: var(--text-gray);
+  cursor: pointer;
+  font-size: 1rem;
+}
+
+.ingredient-remove:hover {
+  background: #ffebee;
+  border-color: var(--error);
+  color: var(--error);
+}

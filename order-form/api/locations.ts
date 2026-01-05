@@ -1,8 +1,6 @@
 /**
- * API: GET /api/bake-slots
- * Returns available bake slots from Google Sheets
- *
- * Self-contained to avoid Vercel module import issues
+ * API: GET /api/locations
+ * Returns active pickup locations from Google Sheets
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -100,23 +98,6 @@ async function readSheet(sheetName: string): Promise<string[][]> {
 
 // ============ Data Types ============
 
-// Matches actual sheet column names
-interface BakeSlotRow {
-  id: string;
-  date: string;
-  location_id: string;
-  total_capacity: string;
-  current_orders: string;
-  cutoff_time: string;
-  is_open: string;
-}
-
-interface BakeSlotLocationRow {
-  id: string;
-  bake_slot_id: string;
-  location_id: string;
-}
-
 interface LocationRow {
   id: string;
   name: string;
@@ -155,97 +136,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  // Get optional locationId filter from query params
-  const locationIdFilter = req.query.locationId as string | undefined;
-
   try {
-    // Fetch all needed sheets
-    const [slotRows, locationRows, slotLocationRows] = await Promise.all([
-      readSheet('BakeSlots'),
-      readSheet('Locations'),
-      readSheet('BakeSlotLocations'),
-    ]);
-
-    const slots = parseRows<BakeSlotRow>(slotRows);
+    const locationRows = await readSheet('Locations');
     const locations = parseRows<LocationRow>(locationRows);
-    const slotLocations = parseRows<BakeSlotLocationRow>(slotLocationRows);
 
-    // Create location lookup map
-    const locationMap = new Map(locations.map(loc => [loc.id, loc.name]));
+    // Filter to active locations and transform for public consumption
+    const activeLocations = locations
+      .filter(loc => loc.is_active === '1' || loc.is_active === 'TRUE')
+      .map(loc => ({
+        id: loc.id,
+        name: loc.name,
+        address: loc.address || undefined,
+      }));
 
-    // Create a map of bake_slot_id -> location_ids[]
-    const slotToLocationsMap = new Map<string, string[]>();
-    for (const sl of slotLocations) {
-      const existing = slotToLocationsMap.get(sl.bake_slot_id) || [];
-      existing.push(sl.location_id);
-      slotToLocationsMap.set(sl.bake_slot_id, existing);
-    }
-
-    const now = new Date();
-
-    // Filter and transform for public consumption
-    const availableSlots = slots
-      .filter(slot => {
-        // Only show open slots (is_open = "1" or "TRUE")
-        if (slot.is_open !== '1' && slot.is_open !== 'TRUE') return false;
-
-        // Only show future slots
-        const slotDate = new Date(slot.date);
-        if (slotDate < now) return false;
-
-        // Only show slots before cutoff
-        if (slot.cutoff_time) {
-          const cutoff = new Date(slot.cutoff_time);
-          if (cutoff < now) return false;
-        }
-
-        // If filtering by location, check if this slot has that location
-        if (locationIdFilter) {
-          const slotLocationIds = slotToLocationsMap.get(slot.id) || [];
-          // Fall back to legacy location_id if no junction table entries
-          if (slotLocationIds.length === 0 && slot.location_id) {
-            slotLocationIds.push(slot.location_id);
-          }
-          if (!slotLocationIds.includes(locationIdFilter)) {
-            return false;
-          }
-        }
-
-        return true;
-      })
-      .map(slot => {
-        const total = parseInt(slot.total_capacity) || 0;
-        const current = parseInt(slot.current_orders) || 0;
-        const remaining = Math.max(0, total - current);
-
-        // Get location names for this slot
-        const slotLocationIds = slotToLocationsMap.get(slot.id) || [];
-        // Fall back to legacy location_id
-        if (slotLocationIds.length === 0 && slot.location_id) {
-          slotLocationIds.push(slot.location_id);
-        }
-        const locationNames = slotLocationIds
-          .map(id => locationMap.get(id))
-          .filter(Boolean)
-          .join(', ') || 'Unknown Location';
-
-        return {
-          id: slot.id,
-          date: slot.date,
-          locationName: locationNames,
-          spotsRemaining: remaining,
-          isOpen: remaining > 0,
-        };
-      })
-      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-
-    return res.status(200).json(availableSlots);
+    return res.status(200).json(activeLocations);
   } catch (error) {
-    console.error('Error fetching bake slots:', error);
+    console.error('Error fetching locations:', error);
     return res.status(500).json({
-      error: 'Failed to fetch bake slots',
+      error: 'Failed to fetch locations',
       details: error instanceof Error ? error.message : 'Unknown error',
-      code: 'SYNC-203'
+      code: 'LOC-001'
     });
   }
 }

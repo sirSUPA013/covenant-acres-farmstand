@@ -25,6 +25,7 @@ export interface Order {
   id: string;
   customerId: string;
   bakeSlotId: string;
+  pickupLocationId: string;
   items: OrderItem[];
   totalAmount: number;
   status: OrderStatus;
@@ -37,6 +38,12 @@ export interface Order {
   adminNotes: string;
   creditApplied: number;
   adjustmentReason: string;
+}
+
+export interface LocationSummary {
+  id: string;
+  name: string;
+  address?: string;
 }
 
 export interface OrderSummary {

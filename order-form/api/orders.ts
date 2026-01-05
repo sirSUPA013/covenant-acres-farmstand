@@ -162,6 +162,7 @@ interface OrderPayload {
   order: {
     id: string;
     bakeSlotId: string;
+    pickupLocationId?: string;
     items: OrderItem[];
     totalAmount: number;
     customerNotes: string;
@@ -174,6 +175,74 @@ interface OrderPayload {
     notificationPref: string;
     smsOptIn: boolean;
   };
+}
+
+// ============ Twilio SMS Integration ============
+
+interface OrderSummary {
+  customerName: string;
+  customerPhone: string;
+  items: OrderItem[];
+  totalAmount: number;
+  bakeDate: string;
+}
+
+async function sendOwnerSmsNotification(orderSummary: OrderSummary): Promise<void> {
+  const accountSid = process.env.TWILIO_ACCOUNT_SID;
+  const authToken = process.env.TWILIO_AUTH_TOKEN;
+  const twilioPhone = process.env.TWILIO_PHONE_NUMBER;
+  const ownerPhones = process.env.OWNER_PHONE_NUMBERS; // comma-separated
+
+  // Skip if Twilio not configured
+  if (!accountSid || !authToken || !twilioPhone || !ownerPhones) {
+    console.log('Twilio not configured, skipping SMS notification');
+    return;
+  }
+
+  // Build message
+  const itemSummary = orderSummary.items
+    .map(item => `${item.quantity}x ${item.flavorName} (${item.size})`)
+    .join(', ');
+
+  const message = `New Order!\n` +
+    `${orderSummary.customerName}\n` +
+    `${orderSummary.customerPhone}\n` +
+    `${itemSummary}\n` +
+    `$${orderSummary.totalAmount.toFixed(2)}\n` +
+    `Pickup: ${orderSummary.bakeDate}`;
+
+  // Send to each owner phone
+  const phones = ownerPhones.split(',').map(p => p.trim()).filter(Boolean);
+  const auth = Buffer.from(`${accountSid}:${authToken}`).toString('base64');
+
+  for (const phone of phones) {
+    try {
+      const response = await fetch(
+        `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Basic ${auth}`,
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          body: new URLSearchParams({
+            From: twilioPhone,
+            To: phone,
+            Body: message,
+          }).toString(),
+        }
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`Failed to send SMS to ${phone}:`, errorText);
+      } else {
+        console.log(`SMS sent to ${phone}`);
+      }
+    } catch (error) {
+      console.error(`Error sending SMS to ${phone}:`, error);
+    }
+  }
 }
 
 // ============ Handler ============
@@ -221,6 +290,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const slotIdIdx = slotHeaders.indexOf('id');
     const totalCapIdx = slotHeaders.indexOf('total_capacity');
     const currentOrdersIdx = slotHeaders.indexOf('current_orders');
+    const slotDateIdx = slotHeaders.indexOf('date');
 
     let slotRowIndex = -1;
     let slotRow: string[] | null = null;
@@ -305,11 +375,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // Create order row matching sheet columns:
-    // id, customer_id, bake_slot_id, items, total_amount, status, payment_method, payment_status, customer_notes, admin_notes, created_at, updated_at
+    // id, customer_id, bake_slot_id, pickup_location_id, items, total_amount, status, payment_method, payment_status, customer_notes, admin_notes, created_at, updated_at
     const orderRow = [
       order.id,
       customerId,
       order.bakeSlotId,
+      order.pickupLocationId || '',           // pickup_location_id
       JSON.stringify(order.items),
       order.totalAmount.toString(),
       'submitted',
@@ -327,6 +398,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const updatedSlot = [...slotRow];
     updatedSlot[currentOrdersIdx] = (currentOrders + orderQuantity).toString();
     await updateRow('BakeSlots', slotRowIndex, updatedSlot);
+
+    // Send owner SMS notification (non-blocking - don't fail order if SMS fails)
+    const bakeDate = slotRow[slotDateIdx] || 'TBD';
+    sendOwnerSmsNotification({
+      customerName: `${customer.firstName} ${customer.lastName}`,
+      customerPhone: customer.phone,
+      items: order.items,
+      totalAmount: order.totalAmount,
+      bakeDate,
+    }).catch(err => console.error('SMS notification error:', err));
 
     return res.status(200).json({
       orderId: order.id,

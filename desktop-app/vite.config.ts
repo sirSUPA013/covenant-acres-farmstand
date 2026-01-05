@@ -9,6 +9,12 @@ export default defineConfig({
   build: {
     outDir: '../../dist/renderer',
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        // Disable crossorigin for Electron file:// protocol compatibility
+        experimentalMinChunkSize: 0,
+      },
+    },
   },
   resolve: {
     alias: {

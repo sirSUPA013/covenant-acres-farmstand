@@ -23,6 +23,10 @@ logs/
 credentials.json
 token.json
 
+# Developer-only files (DO NOT COMMIT)
+docs/
+DEV_NOTES.md
+
 # IDE
 .idea/
 .vscode/

@@ -213,6 +213,8 @@ export async function initDatabase(): Promise<void> {
       require_payment_method INTEGER DEFAULT 0,
       notification_email INTEGER DEFAULT 1,
       notification_sms INTEGER DEFAULT 0,
+      notification_emails TEXT DEFAULT '[]',
+      notification_phones TEXT DEFAULT '[]',
       sms_provider TEXT,
       sms_api_key TEXT,
       email_provider TEXT,
@@ -221,6 +223,10 @@ export async function initDatabase(): Promise<void> {
       google_credentials TEXT,
       quiet_hours_start TEXT DEFAULT '21:00',
       quiet_hours_end TEXT DEFAULT '08:00',
+      bake_day_setup_minutes INTEGER DEFAULT 60,
+      bake_day_per_loaf_minutes INTEGER DEFAULT 8,
+      bake_day_cleanup_minutes INTEGER DEFAULT 45,
+      misc_production_per_loaf_minutes INTEGER DEFAULT 15,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
@@ -263,6 +269,36 @@ export async function initDatabase(): Promise<void> {
       created_at TEXT NOT NULL
     );
 
+    -- Extra Production (bread made without orders)
+    CREATE TABLE IF NOT EXISTS extra_production (
+      id TEXT PRIMARY KEY,
+      bake_slot_id TEXT,
+      production_date TEXT NOT NULL,
+      flavor_id TEXT NOT NULL,
+      quantity INTEGER NOT NULL,
+      disposition TEXT NOT NULL,
+      sale_price REAL,
+      total_revenue REAL,
+      notes TEXT,
+      created_by TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (bake_slot_id) REFERENCES bake_slots(id),
+      FOREIGN KEY (flavor_id) REFERENCES flavors(id),
+      FOREIGN KEY (created_by) REFERENCES admin_users(id)
+    );
+
+    -- Bake Slot Locations (junction table - one bake day can have multiple pickup locations)
+    CREATE TABLE IF NOT EXISTS bake_slot_locations (
+      id TEXT PRIMARY KEY,
+      bake_slot_id TEXT NOT NULL,
+      location_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (bake_slot_id) REFERENCES bake_slots(id) ON DELETE CASCADE,
+      FOREIGN KEY (location_id) REFERENCES locations(id),
+      UNIQUE(bake_slot_id, location_id)
+    );
+
     -- Indexes
     CREATE INDEX IF NOT EXISTS idx_orders_bake_slot ON orders(bake_slot_id);
     CREATE INDEX IF NOT EXISTS idx_orders_customer ON orders(customer_id);
@@ -271,6 +307,12 @@ export async function initDatabase(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_customers_email ON customers(email);
     CREATE INDEX IF NOT EXISTS idx_audit_log_user ON audit_log(user_id);
     CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at);
+    CREATE INDEX IF NOT EXISTS idx_extra_production_date ON extra_production(production_date);
+    CREATE INDEX IF NOT EXISTS idx_extra_production_slot ON extra_production(bake_slot_id);
+    CREATE INDEX IF NOT EXISTS idx_extra_production_disposition ON extra_production(disposition);
+    CREATE INDEX IF NOT EXISTS idx_extra_production_flavor ON extra_production(flavor_id);
+    CREATE INDEX IF NOT EXISTS idx_bake_slot_locations_slot ON bake_slot_locations(bake_slot_id);
+    CREATE INDEX IF NOT EXISTS idx_bake_slot_locations_location ON bake_slot_locations(location_id);
   `);
 
   // Migrations for admin_users table
@@ -342,6 +384,80 @@ export async function initDatabase(): Promise<void> {
   if (!ingredientColumns.some(col => col.name === 'category')) {
     db.exec("ALTER TABLE ingredients ADD COLUMN category TEXT");
     log('info', 'Added category column to ingredients');
+  }
+
+  // Migrations for settings table - payment links
+  const settingsColumns = db.prepare("PRAGMA table_info(settings)").all() as Array<{ name: string }>;
+
+  if (!settingsColumns.some(col => col.name === 'enable_prepayment')) {
+    db.exec("ALTER TABLE settings ADD COLUMN enable_prepayment INTEGER DEFAULT 0");
+    log('info', 'Added enable_prepayment column to settings');
+  }
+
+  if (!settingsColumns.some(col => col.name === 'venmo_username')) {
+    db.exec("ALTER TABLE settings ADD COLUMN venmo_username TEXT");
+    log('info', 'Added venmo_username column to settings');
+  }
+
+  if (!settingsColumns.some(col => col.name === 'cashapp_cashtag')) {
+    db.exec("ALTER TABLE settings ADD COLUMN cashapp_cashtag TEXT");
+    log('info', 'Added cashapp_cashtag column to settings');
+  }
+
+  if (!settingsColumns.some(col => col.name === 'paypal_username')) {
+    db.exec("ALTER TABLE settings ADD COLUMN paypal_username TEXT");
+    log('info', 'Added paypal_username column to settings');
+  }
+
+  if (!settingsColumns.some(col => col.name === 'zelle_email')) {
+    db.exec("ALTER TABLE settings ADD COLUMN zelle_email TEXT");
+    log('info', 'Added zelle_email column to settings');
+  }
+
+  // Migration: Add time estimate columns to settings
+  if (!settingsColumns.some(col => col.name === 'bake_day_setup_minutes')) {
+    db.exec("ALTER TABLE settings ADD COLUMN bake_day_setup_minutes INTEGER DEFAULT 60");
+    log('info', 'Added bake_day_setup_minutes column to settings');
+  }
+  if (!settingsColumns.some(col => col.name === 'bake_day_per_loaf_minutes')) {
+    db.exec("ALTER TABLE settings ADD COLUMN bake_day_per_loaf_minutes INTEGER DEFAULT 8");
+    log('info', 'Added bake_day_per_loaf_minutes column to settings');
+  }
+  if (!settingsColumns.some(col => col.name === 'bake_day_cleanup_minutes')) {
+    db.exec("ALTER TABLE settings ADD COLUMN bake_day_cleanup_minutes INTEGER DEFAULT 45");
+    log('info', 'Added bake_day_cleanup_minutes column to settings');
+  }
+  if (!settingsColumns.some(col => col.name === 'misc_production_per_loaf_minutes')) {
+    db.exec("ALTER TABLE settings ADD COLUMN misc_production_per_loaf_minutes INTEGER DEFAULT 15");
+    log('info', 'Added misc_production_per_loaf_minutes column to settings');
+  }
+
+  // Migration: Add pickup_location_id to orders table
+  const orderColumns = db.prepare("PRAGMA table_info(orders)").all() as Array<{ name: string }>;
+  if (!orderColumns.some(col => col.name === 'pickup_location_id')) {
+    db.exec("ALTER TABLE orders ADD COLUMN pickup_location_id TEXT REFERENCES locations(id)");
+    log('info', 'Added pickup_location_id column to orders');
+  }
+
+  // Migration: Migrate existing bake_slots.location_id to bake_slot_locations junction table
+  const existingSlotsWithLocation = db.prepare(`
+    SELECT id, location_id FROM bake_slots WHERE location_id IS NOT NULL AND location_id != ''
+  `).all() as Array<{ id: string; location_id: string }>;
+
+  for (const slot of existingSlotsWithLocation) {
+    // Check if already migrated
+    const existing = db.prepare(`
+      SELECT COUNT(*) as count FROM bake_slot_locations WHERE bake_slot_id = ? AND location_id = ?
+    `).get(slot.id, slot.location_id) as { count: number };
+
+    if (existing.count === 0) {
+      const junctionId = `bsl-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+      db.prepare(`
+        INSERT INTO bake_slot_locations (id, bake_slot_id, location_id, created_at)
+        VALUES (?, ?, ?, ?)
+      `).run(junctionId, slot.id, slot.location_id, new Date().toISOString());
+      log('info', 'Migrated bake slot location to junction table', { slotId: slot.id, locationId: slot.location_id });
+    }
   }
 
   // Initialize overhead_settings if empty

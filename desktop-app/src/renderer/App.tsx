@@ -4,12 +4,16 @@ import { Routes, Route, NavLink, useLocation } from 'react-router-dom';
 // Components
 import LockScreen from './components/LockScreen';
 
+// Assets
+import logo from './assets/logo.jpg';
+
 // Pages
 import OrdersPage from './pages/OrdersPage';
 import CustomersPage from './pages/CustomersPage';
 import ConfigPage from './pages/ConfigPage';
 import RecipesPage from './pages/RecipesPage';
 import PrepSheetPage from './pages/PrepSheetPage';
+import ProductionPage from './pages/ProductionPage';
 import AnalyticsPage from './pages/AnalyticsPage';
 import SettingsPage from './pages/SettingsPage';
 import UsersPage from './pages/UsersPage';
@@ -71,12 +75,13 @@ function App() {
   }
 
   const navItems = [
-    { path: '/', label: 'Orders', icon: '📋' },
+    { path: '/', label: 'Analytics', icon: '📊' },
+    { path: '/orders', label: 'Orders', icon: '📋' },
     { path: '/customers', label: 'Customers', icon: '👥' },
+    { path: '/production', label: 'Production', icon: '🍞' },
     { path: '/config', label: 'Configure', icon: '⚙️' },
     { path: '/recipes', label: 'Recipes', icon: '📖' },
     { path: '/prep', label: 'Prep Sheet', icon: '📝' },
-    { path: '/analytics', label: 'Analytics', icon: '📊' },
     { path: '/users', label: 'Users', icon: '👤', requiresOwner: true },
   ];
 
@@ -93,7 +98,7 @@ function App() {
       {/* Sidebar */}
       <aside className="sidebar">
         <div className="sidebar-header">
-          <img src="./assets/logo.jpg" alt="Covenant Acres" className="app-logo" />
+          <img src={logo} alt="Covenant Acres" className="app-logo" />
         </div>
 
         <nav className="sidebar-nav">
@@ -151,12 +156,13 @@ function App() {
       {/* Main Content */}
       <main className="main-content">
         <Routes>
-          <Route path="/" element={<OrdersPage />} />
+          <Route path="/" element={<AnalyticsPage />} />
+          <Route path="/orders" element={<OrdersPage />} />
           <Route path="/customers" element={<CustomersPage />} />
           <Route path="/config" element={<ConfigPage />} />
           <Route path="/recipes" element={<RecipesPage />} />
           <Route path="/prep" element={<PrepSheetPage />} />
-          <Route path="/analytics" element={<AnalyticsPage />} />
+          <Route path="/production" element={<ProductionPage />} />
           <Route path="/users" element={<UsersPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Routes>

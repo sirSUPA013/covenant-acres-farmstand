@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld('api', {
 
   // Bake Slots
   getBakeSlots: (filters?: object) => ipcRenderer.invoke('bakeSlots:getAll', filters),
+  getBakeSlotsByLocation: (locationId: string) => ipcRenderer.invoke('bakeSlots:getByLocation', locationId),
   createBakeSlot: (data: object) => ipcRenderer.invoke('bakeSlots:create', data),
   updateBakeSlot: (id: string, data: object) => ipcRenderer.invoke('bakeSlots:update', id, data),
   deleteBakeSlot: (id: string) => ipcRenderer.invoke('bakeSlots:delete', id),
@@ -69,6 +70,7 @@ contextBridge.exposeInMainWorld('api', {
   getCustomerStats: () => ipcRenderer.invoke('analytics:customers'),
   getProfitByFlavor: () => ipcRenderer.invoke('analytics:profitByFlavor'),
   getProfitByBakeSlot: (filters?: object) => ipcRenderer.invoke('analytics:profitByBakeSlot', filters),
+  getProfitPerHour: (filters?: object) => ipcRenderer.invoke('analytics:profitPerHour', filters),
 
   // Notifications
   sendNotification: (type: string, recipientId: string, data: object) =>
@@ -112,6 +114,14 @@ contextBridge.exposeInMainWorld('api', {
   // Audit Log
   getAuditLog: (filters?: object) => ipcRenderer.invoke('audit:getLog', filters),
 
+  // Extra Production
+  getExtraProduction: (filters?: object) => ipcRenderer.invoke('extraProduction:getAll', filters),
+  createExtraProduction: (data: object) => ipcRenderer.invoke('extraProduction:create', data),
+  updateExtraProduction: (id: string, data: object) => ipcRenderer.invoke('extraProduction:update', id, data),
+  deleteExtraProduction: (id: string) => ipcRenderer.invoke('extraProduction:delete', id),
+  getOpenCapacity: (bakeSlotId: string) => ipcRenderer.invoke('extraProduction:getOpenCapacity', bakeSlotId),
+  getExtraProductionAnalytics: (filters?: object) => ipcRenderer.invoke('extraProduction:getAnalytics', filters),
+
   // System
   sendErrorReport: () => ipcRenderer.invoke('system:sendErrorReport'),
   getAppVersion: () => ipcRenderer.invoke('system:version'),
@@ -147,6 +157,7 @@ declare global {
       issueCredit: (id: string, amount: number, reason: string) => Promise<void>;
 
       getBakeSlots: (filters?: object) => Promise<unknown[]>;
+      getBakeSlotsByLocation: (locationId: string) => Promise<unknown[]>;
       createBakeSlot: (data: object) => Promise<string>;
       updateBakeSlot: (id: string, data: object) => Promise<void>;
       deleteBakeSlot: (id: string) => Promise<void>;
@@ -186,6 +197,12 @@ declare global {
       getCustomerStats: () => Promise<unknown>;
       getProfitByFlavor: () => Promise<Array<{ id: string; name: string; price: number; cost: number; profit: number; margin: number }>>;
       getProfitByBakeSlot: (filters?: object) => Promise<Array<{ id: string; date: string; locationName: string; loaves: number; revenue: number; cogs: number; profit: number }>>;
+      getProfitPerHour: (filters?: object) => Promise<{
+        bakeSlots: { count: number; loaves: number; revenue: number; cogs: number; profit: number; timeMinutes: number };
+        extraProduction: { loaves: number; revenue: number; cogs: number; profit: number; timeMinutes: number };
+        totals: { loaves: number; revenue: number; cogs: number; profit: number; timeMinutes: number; timeHours: number; profitPerHour: number };
+        timeSettings: { bakeDaySetupMinutes: number; bakeDayPerLoafMinutes: number; bakeDayCleanupMinutes: number; miscProductionPerLoafMinutes: number };
+      }>;
 
       sendNotification: (type: string, recipientId: string, data: object) => Promise<void>;
       broadcastMessage: (message: string, filters: object) => Promise<void>;
@@ -226,6 +243,23 @@ declare global {
       deleteAdminUser: (id: string) => Promise<{ success: boolean; error?: string }>;
 
       getAuditLog: (filters?: object) => Promise<unknown[]>;
+
+      getExtraProduction: (filters?: object) => Promise<unknown[]>;
+      createExtraProduction: (data: object) => Promise<{ success: boolean; id?: string }>;
+      updateExtraProduction: (id: string, data: object) => Promise<{ success: boolean }>;
+      deleteExtraProduction: (id: string) => Promise<{ success: boolean }>;
+      getOpenCapacity: (bakeSlotId: string) => Promise<{
+        totalCapacity: number;
+        orderedCount: number;
+        extraLoggedCount: number;
+        openSlots: number;
+      } | null>;
+      getExtraProductionAnalytics: (filters?: object) => Promise<{
+        sold: { count: number; loaves: number; revenue: number };
+        gifted: { count: number; loaves: number; cost: number };
+        wasted: { count: number; loaves: number; cost: number };
+        personal: { count: number; loaves: number };
+      }>;
 
       sendErrorReport: () => Promise<void>;
       getAppVersion: () => Promise<string>;

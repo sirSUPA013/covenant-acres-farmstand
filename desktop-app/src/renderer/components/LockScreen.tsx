@@ -1,5 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 
+// Assets
+import logo from '../assets/logo.jpg';
+
 interface AdminUser {
   id: string;
   name: string;
@@ -124,7 +127,7 @@ function LockScreen({ onUnlock }: LockScreenProps) {
   return (
     <div className="lock-screen">
       <div className="lock-card">
-        <img src="./assets/logo.jpg" alt="Covenant Acres" className="lock-logo" />
+        <img src={logo} alt="Covenant Acres" className="lock-logo" />
         <h1 className="lock-title">Covenant Acres</h1>
         <p className="lock-subtitle">Admin Portal</p>
 
