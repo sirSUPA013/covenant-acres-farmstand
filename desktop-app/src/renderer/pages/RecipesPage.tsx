@@ -672,7 +672,8 @@ function RecipesPage() {
           font-weight: 500;
         }
         .modal-large {
-          max-width: 800px;
+          max-width: 950px;
+          width: 90%;
         }
         .recipe-steps {
           padding-left: 20px;
