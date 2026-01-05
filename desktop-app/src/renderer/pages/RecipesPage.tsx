@@ -520,39 +520,54 @@ function RecipesPage() {
                     ))}
                   </div>
 
-                  <div className="form-group">
-                    <label className="form-label">Preparation Instructions</label>
-                    <textarea
-                      className="form-textarea"
-                      value={editPrepInstructions}
-                      onChange={(e) => setEditPrepInstructions(e.target.value)}
-                      rows={4}
-                      placeholder="Enter preparation instructions (mixing, shaping, proofing, etc.)"
-                    />
+                  {/* Detailed Instructions Section */}
+                  <div style={{ borderTop: '1px solid #e0e0e0', paddingTop: '16px', marginTop: '16px' }}>
+                    <h4 style={{ marginBottom: '4px', color: '#333' }}>Detailed Instructions</h4>
+                    <p style={{ fontSize: '0.8rem', color: '#666', marginBottom: '16px' }}>
+                      Full written instructions for training or reference. Include all details, tips, and explanations.
+                    </p>
+
+                    <div className="form-group">
+                      <label className="form-label">Preparation (Day Before)</label>
+                      <textarea
+                        className="form-textarea"
+                        value={editPrepInstructions}
+                        onChange={(e) => setEditPrepInstructions(e.target.value)}
+                        rows={6}
+                        placeholder="Detailed prep instructions: feeding starter, mixing, bulk ferment, shaping, overnight proof..."
+                      />
+                    </div>
+
+                    <div className="form-group">
+                      <label className="form-label">Baking (Bake Day)</label>
+                      <textarea
+                        className="form-textarea"
+                        value={editBakeInstructions}
+                        onChange={(e) => setEditBakeInstructions(e.target.value)}
+                        rows={6}
+                        placeholder="Detailed baking instructions: preheat, scoring, steam phase, browning, cooling..."
+                      />
+                    </div>
                   </div>
 
-                  <div className="form-group">
-                    <label className="form-label">Baking Instructions</label>
-                    <textarea
-                      className="form-textarea"
-                      value={editBakeInstructions}
-                      onChange={(e) => setEditBakeInstructions(e.target.value)}
-                      rows={4}
-                      placeholder="Enter baking instructions (oven temps, timing, cooling, etc.)"
-                    />
-                  </div>
+                  {/* Quick Reference Steps Section */}
+                  <div style={{ borderTop: '1px solid #e0e0e0', paddingTop: '16px', marginTop: '16px' }}>
+                    <h4 style={{ marginBottom: '4px', color: '#333' }}>Quick Reference Steps</h4>
+                    <p style={{ fontSize: '0.8rem', color: '#666', marginBottom: '16px' }}>
+                      Short, timed steps for prep sheets and at-a-glance reference. Keep each step brief.
+                    </p>
 
-                  <div className="form-group">
-                    <label className="form-label">
-                      Step-by-Step Process
-                      <button
-                        className="btn btn-small btn-secondary"
-                        onClick={addStep}
-                        style={{ marginLeft: '16px' }}
-                      >
-                        + Add Step
-                      </button>
-                    </label>
+                    <div className="form-group">
+                      <label className="form-label">
+                        Step-by-Step Process
+                        <button
+                          className="btn btn-small btn-secondary"
+                          onClick={addStep}
+                          style={{ marginLeft: '16px' }}
+                        >
+                          + Add Step
+                        </button>
+                      </label>
                     {editSteps.map((step, i) => (
                       <div key={i} className="step-row">
                         <span className="step-number">{step.order}.</span>
@@ -582,6 +597,7 @@ function RecipesPage() {
                         </button>
                       </div>
                     ))}
+                    </div>
                   </div>
 
                   <div className="form-group">
