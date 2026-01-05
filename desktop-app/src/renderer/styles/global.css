@@ -523,6 +523,18 @@ body {
   border-color: var(--primary-green);
 }
 
+/* Payment Method Prompt */
+.payment-method-prompt {
+  background: #fff8e1;
+  border: 1px solid #ffc107;
+  border-radius: 6px;
+  padding: var(--spacing-md);
+}
+
+.payment-method-prompt .form-select {
+  margin-bottom: 0;
+}
+
 /* Utility */
 .text-right { text-align: right; }
 .text-center { text-align: center; }

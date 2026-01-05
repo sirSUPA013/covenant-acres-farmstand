@@ -64,6 +64,10 @@ function OrdersPage() {
   const [bakeSlots, setBakeSlots] = useState<BakeSlot[]>([]);
   const [saving, setSaving] = useState(false);
 
+  // Payment method state for modal
+  const [pendingPaymentStatus, setPendingPaymentStatus] = useState('');
+  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState('');
+
   useEffect(() => {
     loadOrders();
     loadSettings();
@@ -108,14 +112,33 @@ function OrdersPage() {
   }
 
   async function updatePaymentStatus(orderId: string, newStatus: string, method?: string) {
+    // If changing to "paid" and payment method is required, show the method selector first
+    if (newStatus === 'paid' && requirePaymentMethod && !method) {
+      setPendingPaymentStatus('paid');
+      return;
+    }
+
     try {
       const updates: Record<string, string> = { payment_status: newStatus };
       if (method) updates.payment_method = method;
       await window.api.updateOrder(orderId, updates);
       loadOrders();
+      // Reset pending state
+      setPendingPaymentStatus('');
+      setSelectedPaymentMethod('');
     } catch (error) {
       console.error('Failed to update payment:', error);
     }
+  }
+
+  function confirmPaymentWithMethod() {
+    if (!selectedOrder || !selectedPaymentMethod) return;
+    updatePaymentStatus(selectedOrder.id, 'paid', selectedPaymentMethod);
+  }
+
+  function cancelPaymentChange() {
+    setPendingPaymentStatus('');
+    setSelectedPaymentMethod('');
   }
 
   function formatDate(dateStr: string) {
@@ -548,14 +571,14 @@ function OrdersPage() {
 
       {/* Order Detail Modal */}
       {selectedOrder && (
-        <div className="modal-overlay" onClick={() => { if (!isEditing) { setSelectedOrder(null); } }}>
+        <div className="modal-overlay" onClick={() => { if (!isEditing) { setSelectedOrder(null); cancelPaymentChange(); } }}>
           <div className="modal modal-large" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2 className="modal-title">
                 Order #{selectedOrder.id.split('-')[0].toUpperCase()}
                 {isEditing && <span style={{ color: '#f59e0b', marginLeft: '8px' }}>(Editing)</span>}
               </h2>
-              <button className="modal-close" onClick={() => { cancelEditing(); setSelectedOrder(null); }}>
+              <button className="modal-close" onClick={() => { cancelEditing(); cancelPaymentChange(); setSelectedOrder(null); }}>
                 ×
               </button>
             </div>
@@ -706,17 +729,53 @@ function OrdersPage() {
                 </div>
                 <div className="form-group">
                   <label className="form-label">Payment Status</label>
-                  <select
-                    className="form-select"
-                    value={selectedOrder.payment_status}
-                    onChange={(e) => updatePaymentStatus(selectedOrder.id, e.target.value)}
-                    disabled={isEditing}
-                  >
-                    <option value="pending">Pending</option>
-                    <option value="paid">Paid</option>
-                    <option value="refunded">Refunded</option>
-                    <option value="credited">Credited</option>
-                  </select>
+                  {pendingPaymentStatus === 'paid' ? (
+                    <div className="payment-method-prompt">
+                      <p style={{ marginBottom: '8px', fontSize: '0.9rem' }}>Select payment method:</p>
+                      <select
+                        className="form-select"
+                        value={selectedPaymentMethod}
+                        onChange={(e) => setSelectedPaymentMethod(e.target.value)}
+                        autoFocus
+                      >
+                        <option value="">Choose method...</option>
+                        <option value="cash">Cash</option>
+                        <option value="venmo">Venmo</option>
+                        <option value="cashapp">Cash App</option>
+                        <option value="zelle">Zelle</option>
+                        <option value="paypal">PayPal</option>
+                        <option value="check">Check</option>
+                        <option value="other">Other</option>
+                      </select>
+                      <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+                        <button
+                          className="btn btn-small btn-primary"
+                          onClick={confirmPaymentWithMethod}
+                          disabled={!selectedPaymentMethod}
+                        >
+                          Confirm
+                        </button>
+                        <button
+                          className="btn btn-small btn-secondary"
+                          onClick={cancelPaymentChange}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <select
+                      className="form-select"
+                      value={selectedOrder.payment_status}
+                      onChange={(e) => updatePaymentStatus(selectedOrder.id, e.target.value)}
+                      disabled={isEditing}
+                    >
+                      <option value="pending">Pending</option>
+                      <option value="paid">Paid</option>
+                      <option value="refunded">Refunded</option>
+                      <option value="credited">Credited</option>
+                    </select>
+                  )}
                 </div>
               </div>
             </div>
@@ -732,7 +791,7 @@ function OrdersPage() {
                 </>
               ) : (
                 <>
-                  <button className="btn btn-secondary" onClick={() => setSelectedOrder(null)}>
+                  <button className="btn btn-secondary" onClick={() => { cancelPaymentChange(); setSelectedOrder(null); }}>
                     Close
                   </button>
                   <button className="btn btn-primary" onClick={() => startEditing(selectedOrder)}>
