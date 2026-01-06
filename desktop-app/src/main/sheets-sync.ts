@@ -579,12 +579,11 @@ export async function syncAll(): Promise<void> {
 }
 
 async function pullFromSheets(): Promise<void> {
+  // Only pull tables that originate from the order form
+  // BakeSlots, Flavors, Locations are created in desktop app - they get PUSHED, not pulled
   const tables = [
     { sheet: 'Orders', table: 'orders' },
     { sheet: 'Customers', table: 'customers' },
-    { sheet: 'BakeSlots', table: 'bake_slots' },
-    { sheet: 'Flavors', table: 'flavors' },
-    { sheet: 'Locations', table: 'locations' },
   ];
 
   for (const { sheet, table } of tables) {

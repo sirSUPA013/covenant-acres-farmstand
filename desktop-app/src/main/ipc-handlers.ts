@@ -103,6 +103,50 @@ export function setupIpcHandlers(): void {
 
   ipcMain.handle('orders:update', async (_event, id, data) => {
     const db = getDb();
+
+    // Check if status is changing - need to adjust bake_slots.current_orders
+    if (data.status) {
+      const order = db.prepare('SELECT status, bake_slot_id, items FROM orders WHERE id = ?').get(id) as {
+        status: string;
+        bake_slot_id: string;
+        items: string;
+      } | undefined;
+
+      if (order && order.status !== data.status) {
+        // Calculate total loaves in order
+        let loafCount = 0;
+        try {
+          const items = JSON.parse(order.items) as Array<{ quantity: number }>;
+          loafCount = items.reduce((sum, item) => sum + (item.quantity || 0), 0);
+        } catch {
+          loafCount = 1; // Fallback
+        }
+
+        // If canceling, decrement current_orders
+        if (data.status === 'canceled' && order.status !== 'canceled') {
+          db.prepare(
+            'UPDATE bake_slots SET current_orders = MAX(0, current_orders - ?) WHERE id = ?'
+          ).run(loafCount, order.bake_slot_id);
+          log('info', 'Decremented bake slot count for canceled order', {
+            orderId: id,
+            bakeSlotId: order.bake_slot_id,
+            loafCount,
+          });
+        }
+        // If un-canceling, increment current_orders
+        else if (order.status === 'canceled' && data.status !== 'canceled') {
+          db.prepare(
+            'UPDATE bake_slots SET current_orders = current_orders + ? WHERE id = ?'
+          ).run(loafCount, order.bake_slot_id);
+          log('info', 'Incremented bake slot count for un-canceled order', {
+            orderId: id,
+            bakeSlotId: order.bake_slot_id,
+            loafCount,
+          });
+        }
+      }
+    }
+
     const fields = Object.keys(data)
       .map((k) => `${k} = ?`)
       .join(', ');
@@ -122,6 +166,35 @@ export function setupIpcHandlers(): void {
     const stmt = db.prepare(`UPDATE orders SET ${fields}, updated_at = ? WHERE id = ?`);
     const updateMany = db.transaction((orderIds: string[]) => {
       for (const id of orderIds) {
+        // If status is changing, adjust bake_slots.current_orders
+        if (data.status) {
+          const order = db.prepare('SELECT status, bake_slot_id, items FROM orders WHERE id = ?').get(id) as {
+            status: string;
+            bake_slot_id: string;
+            items: string;
+          } | undefined;
+
+          if (order && order.status !== data.status) {
+            let loafCount = 0;
+            try {
+              const items = JSON.parse(order.items) as Array<{ quantity: number }>;
+              loafCount = items.reduce((sum, item) => sum + (item.quantity || 0), 0);
+            } catch {
+              loafCount = 1;
+            }
+
+            if (data.status === 'canceled' && order.status !== 'canceled') {
+              db.prepare(
+                'UPDATE bake_slots SET current_orders = MAX(0, current_orders - ?) WHERE id = ?'
+              ).run(loafCount, order.bake_slot_id);
+            } else if (order.status === 'canceled' && data.status !== 'canceled') {
+              db.prepare(
+                'UPDATE bake_slots SET current_orders = current_orders + ? WHERE id = ?'
+              ).run(loafCount, order.bake_slot_id);
+            }
+          }
+        }
+
         stmt.run(...Object.values(data), now, id);
       }
     });
@@ -137,9 +210,9 @@ export function setupIpcHandlers(): void {
     const params: unknown[] = [];
 
     if (filters?.search) {
-      query += ' AND (first_name LIKE ? OR last_name LIKE ? OR email LIKE ?)';
+      query += ' AND (first_name LIKE ? OR last_name LIKE ? OR email LIKE ? OR phone LIKE ?)';
       const term = `%${filters.search}%`;
-      params.push(term, term, term);
+      params.push(term, term, term, term);
     }
 
     query += ' ORDER BY last_name, first_name';
@@ -1797,21 +1870,22 @@ export function setupIpcHandlers(): void {
 
     // Calculate totals
     const totals = {
-      sold: { count: 0, quantity: 0, revenue: 0 },
-      gifted: { count: 0, quantity: 0, cost: 0 },
-      wasted: { count: 0, quantity: 0, cost: 0 },
-      personal: { count: 0, quantity: 0 },
+      sold: { count: 0, loaves: 0, revenue: 0 },
+      pending: { count: 0, loaves: 0 },
+      gifted: { count: 0, loaves: 0, cost: 0 },
+      wasted: { count: 0, loaves: 0, cost: 0 },
+      personal: { count: 0, loaves: 0 },
       totalLoaves: 0
     };
 
     for (const row of summary) {
-      const key = row.disposition as 'sold' | 'gifted' | 'wasted' | 'personal';
+      const key = row.disposition as 'sold' | 'pending' | 'gifted' | 'wasted' | 'personal';
       if (totals[key]) {
         totals[key].count = row.entry_count || 0;
-        totals[key].quantity = row.total_loaves || 0;
+        totals[key].loaves = row.total_loaves || 0;
         totals.totalLoaves += row.total_loaves || 0;
         if (key === 'sold') {
-          totals[key].revenue = row.revenue || 0;
+          (totals[key] as { count: number; loaves: number; revenue: number }).revenue = row.revenue || 0;
         }
       }
     }

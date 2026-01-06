@@ -82,6 +82,14 @@ function ConfigPage() {
     category: 'base',
   });
 
+  // Location editing
+  const [showLocationModal, setShowLocationModal] = useState(false);
+  const [editingLocation, setEditingLocation] = useState<Location | null>(null);
+  const [locationForm, setLocationForm] = useState({
+    name: '',
+    address: '',
+  });
+
   // View mode for bake slots
   const [slotsView, setSlotsView] = useState<'list' | 'calendar'>('list');
   const [calendarMonth, setCalendarMonth] = useState(() => {
@@ -240,6 +248,71 @@ function ConfigPage() {
       (ing.vendor && ing.vendor.toLowerCase().includes(ingredientSearch.toLowerCase()));
     return matchesFilter && matchesSearch;
   });
+
+  // Location functions
+  function openLocationModal(location?: Location) {
+    if (location) {
+      setEditingLocation(location);
+      setLocationForm({
+        name: location.name,
+        address: location.address || '',
+      });
+    } else {
+      setEditingLocation(null);
+      setLocationForm({
+        name: '',
+        address: '',
+      });
+    }
+    setShowLocationModal(true);
+  }
+
+  function closeLocationModal() {
+    setShowLocationModal(false);
+    setEditingLocation(null);
+  }
+
+  async function saveLocation() {
+    if (!locationForm.name.trim()) return;
+
+    try {
+      if (editingLocation) {
+        await window.api.updateLocation(editingLocation.id, {
+          name: locationForm.name,
+          address: locationForm.address,
+        });
+      } else {
+        await window.api.createLocation({
+          name: locationForm.name,
+          address: locationForm.address,
+        });
+      }
+      closeLocationModal();
+      loadAll();
+    } catch (error) {
+      console.error('Failed to save location:', error);
+    }
+  }
+
+  async function toggleLocation(locationId: string, isActive: boolean) {
+    try {
+      await window.api.updateLocation(locationId, { is_active: isActive ? 1 : 0 });
+      loadAll();
+    } catch (error) {
+      console.error('Failed to update location:', error);
+    }
+  }
+
+  async function deleteLocation(location: Location) {
+    if (!confirm(`Delete "${location.name}"? This cannot be undone.`)) return;
+
+    try {
+      await window.api.deleteLocation(location.id);
+      loadAll();
+    } catch (error) {
+      console.error('Failed to delete location:', error);
+    }
+  }
 
   // Format cost per unit for display
   function formatCostPerUnit(cost: number, unit: string) {
@@ -773,32 +846,64 @@ function ConfigPage() {
             <div className="card">
               <div className="card-header">
                 <h2 className="card-title">Pickup Locations</h2>
+                <button className="btn btn-primary" onClick={() => openLocationModal()}>
+                  + Add Location
+                </button>
               </div>
 
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>Name</th>
-                    <th>Address</th>
-                    <th>Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {locations.map((location) => (
-                    <tr key={location.id}>
-                      <td>{location.name}</td>
-                      <td>{location.address || '-'}</td>
-                      <td>
-                        <span
-                          className={`status-badge ${location.is_active ? 'status-paid' : 'status-canceled'}`}
-                        >
-                          {location.is_active ? 'Active' : 'Inactive'}
-                        </span>
-                      </td>
+              {locations.length === 0 ? (
+                <div className="empty-state">
+                  <p>No locations configured. Add one to set up pickup points!</p>
+                </div>
+              ) : (
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>Address</th>
+                      <th>Status</th>
+                      <th>Actions</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {locations.map((location) => (
+                      <tr key={location.id}>
+                        <td>{location.name}</td>
+                        <td>{location.address || '-'}</td>
+                        <td>
+                          <span
+                            className={`status-badge ${location.is_active ? 'status-paid' : 'status-canceled'}`}
+                          >
+                            {location.is_active ? 'Active' : 'Inactive'}
+                          </span>
+                        </td>
+                        <td>
+                          <div style={{ display: 'flex', gap: '4px' }}>
+                            <button
+                              className="btn btn-small btn-secondary"
+                              onClick={() => openLocationModal(location)}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              className={`btn btn-small ${location.is_active ? 'btn-secondary' : 'btn-primary'}`}
+                              onClick={() => toggleLocation(location.id, !location.is_active)}
+                            >
+                              {location.is_active ? 'Deactivate' : 'Activate'}
+                            </button>
+                            <button
+                              className="btn btn-small btn-danger"
+                              onClick={() => deleteLocation(location)}
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
             </div>
           )}
 
@@ -1331,6 +1436,55 @@ function ConfigPage() {
                 disabled={!ingredientForm.name.trim() || ingredientForm.package_size <= 0}
               >
                 {editingIngredient ? 'Save Changes' : 'Add Ingredient'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Location Modal */}
+      {showLocationModal && (
+        <div className="modal-overlay" onClick={closeLocationModal}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '450px' }}>
+            <div className="modal-header">
+              <h2 className="modal-title">{editingLocation ? 'Edit Location' : 'Add Location'}</h2>
+              <button className="modal-close" onClick={closeLocationModal}>
+                ×
+              </button>
+            </div>
+            <div className="modal-body">
+              <div className="form-group">
+                <label className="form-label">Name *</label>
+                <input
+                  type="text"
+                  className="form-input"
+                  value={locationForm.name}
+                  onChange={(e) => setLocationForm({ ...locationForm, name: e.target.value })}
+                  placeholder="e.g., Farmer's Market"
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Address</label>
+                <input
+                  type="text"
+                  className="form-input"
+                  value={locationForm.address}
+                  onChange={(e) => setLocationForm({ ...locationForm, address: e.target.value })}
+                  placeholder="e.g., 123 Main St, City, State"
+                />
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={closeLocationModal}>
+                Cancel
+              </button>
+              <button
+                className="btn btn-primary"
+                onClick={saveLocation}
+                disabled={!locationForm.name.trim()}
+              >
+                {editingLocation ? 'Save Changes' : 'Add Location'}
               </button>
             </div>
           </div>

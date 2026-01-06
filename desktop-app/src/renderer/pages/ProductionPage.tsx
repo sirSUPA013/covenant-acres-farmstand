@@ -7,7 +7,7 @@ interface ExtraProduction {
   flavor_id: string;
   flavor_name: string;
   quantity: number;
-  disposition: 'sold' | 'gifted' | 'wasted' | 'personal';
+  disposition: 'sold' | 'gifted' | 'wasted' | 'personal' | 'pending';
   sale_price: number | null;
   total_revenue: number | null;
   notes: string | null;
@@ -33,13 +33,15 @@ interface ProductionAnalytics {
   gifted: { count: number; loaves: number; cost: number };
   wasted: { count: number; loaves: number; cost: number };
   personal: { count: number; loaves: number };
+  pending: { count: number; loaves: number };
 }
 
-const DISPOSITIONS = ['sold', 'gifted', 'wasted', 'personal'] as const;
+const DISPOSITIONS = ['sold', 'pending', 'gifted', 'wasted', 'personal'] as const;
 type Disposition = typeof DISPOSITIONS[number];
 
 const DISPOSITION_LABELS: Record<Disposition, string> = {
   sold: 'Sold',
+  pending: 'Pending',
   gifted: 'Gifted',
   wasted: 'Wasted',
   personal: 'Personal',
@@ -47,6 +49,7 @@ const DISPOSITION_LABELS: Record<Disposition, string> = {
 
 const DISPOSITION_COLORS: Record<Disposition, string> = {
   sold: '#2e7d32',
+  pending: '#f57c00', // Orange for pending/unsold
   gifted: '#1565c0',
   wasted: '#c62828',
   personal: '#7b1fa2',
@@ -272,6 +275,12 @@ function ProductionPage() {
               {formatCurrency(analytics.sold.revenue)}
             </div>
             <div className="stat-label">Walk-in Sales ({analytics.sold.loaves} loaves)</div>
+          </div>
+          <div className="stat-card">
+            <div className="stat-value" style={{ color: DISPOSITION_COLORS.pending }}>
+              {analytics.pending.loaves}
+            </div>
+            <div className="stat-label">Pending (unsold)</div>
           </div>
           <div className="stat-card">
             <div className="stat-value" style={{ color: DISPOSITION_COLORS.gifted }}>

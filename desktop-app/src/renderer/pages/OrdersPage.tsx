@@ -15,7 +15,7 @@ interface Order {
   total_amount: number;
   status: string;
   payment_status: string;
-  notes: string;
+  admin_notes: string;
   created_at: string;
 }
 
@@ -160,7 +160,7 @@ function OrdersPage() {
   async function startEditing(order: Order) {
     setIsEditing(true);
     setEditItems(parseItems(order.items));
-    setEditNotes(order.notes || '');
+    setEditNotes(order.admin_notes || '');
     setEditBakeSlotId(order.bake_slot_id);
 
     // Load flavors and bake slots for editing
@@ -245,7 +245,7 @@ function OrdersPage() {
       const updates: Record<string, unknown> = {
         items: JSON.stringify(editItems),
         total_amount: newTotal,
-        notes: editNotes,
+        admin_notes: editNotes,
       };
 
       // If bake slot changed, update it
@@ -303,7 +303,7 @@ function OrdersPage() {
         `$${order.total_amount.toFixed(2)}`,
         order.status,
         order.payment_status,
-        (order.notes || '').replace(/"/g, '""'),
+        (order.admin_notes || '').replace(/"/g, '""'),
       ];
     });
 
@@ -457,6 +457,7 @@ function OrdersPage() {
               <option value="paid">Paid</option>
               <option value="refunded">Refunded</option>
               <option value="credited">Credited</option>
+              <option value="void">Void</option>
             </select>
             {bulkPayment === 'paid' && (
               <select
@@ -774,6 +775,7 @@ function OrdersPage() {
                       <option value="paid">Paid</option>
                       <option value="refunded">Refunded</option>
                       <option value="credited">Credited</option>
+                      <option value="void">Void</option>
                     </select>
                   )}
                 </div>
