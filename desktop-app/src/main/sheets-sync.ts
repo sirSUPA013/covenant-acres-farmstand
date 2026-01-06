@@ -169,6 +169,318 @@ async function readSheet(sheetName: string): Promise<string[][]> {
   return data.values || [];
 }
 
+/**
+ * Write data to a Google Sheet (creates or overwrites)
+ */
+async function writeSheet(
+  sheetName: string,
+  headers: string[],
+  rows: (string | number | null)[][]
+): Promise<void> {
+  const config = getConfig();
+  if (!config) {
+    throw new Error('Google Sheets not configured');
+  }
+
+  const accessToken = await getAccessToken(config.credentials);
+
+  // Convert all values to strings for Sheets API
+  const data = [
+    headers,
+    ...rows.map((row) => row.map((cell) => (cell === null ? '' : String(cell)))),
+  ];
+
+  // Clear existing data first, then write new data
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${config.spreadsheetId}/values/${encodeURIComponent(sheetName)}!A1?valueInputOption=RAW`;
+
+  const response = await fetch(url, {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ values: data }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    // If sheet doesn't exist, create it and retry
+    if (errorText.includes('Unable to parse range')) {
+      await createSheet(sheetName);
+      // Retry write
+      const retryResponse = await fetch(url, {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ values: data }),
+      });
+      if (!retryResponse.ok) {
+        throw new Error(`Sheets write error after create: ${await retryResponse.text()}`);
+      }
+      return;
+    }
+    throw new Error(`Sheets write error: ${errorText}`);
+  }
+}
+
+/**
+ * Create a new sheet tab in the spreadsheet
+ */
+async function createSheet(sheetName: string): Promise<void> {
+  const config = getConfig();
+  if (!config) {
+    throw new Error('Google Sheets not configured');
+  }
+
+  const accessToken = await getAccessToken(config.credentials);
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${config.spreadsheetId}:batchUpdate`;
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      requests: [
+        {
+          addSheet: {
+            properties: {
+              title: sheetName,
+            },
+          },
+        },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    // Ignore "already exists" error
+    if (!errorText.includes('already exists')) {
+      throw new Error(`Failed to create sheet: ${errorText}`);
+    }
+  }
+
+  log('info', `Created new sheet: ${sheetName}`);
+}
+
+/**
+ * Read all rows from a local SQLite table
+ */
+function readLocalTable(
+  table: string,
+  columns: string[]
+): (string | number | null)[][] {
+  const db = getDb();
+  const rows = db.prepare(`SELECT ${columns.join(', ')} FROM ${table}`).all() as Record<
+    string,
+    string | number | null
+  >[];
+
+  return rows.map((row) => columns.map((col) => row[col]));
+}
+
+/**
+ * Push local data to Google Sheets (backup)
+ * Desktop app is source of truth for these tables
+ */
+async function pushToSheets(): Promise<void> {
+  // Tables to push with their columns (first column must be ID/primary key)
+  const pushTables = [
+    {
+      table: 'bake_slots',
+      sheet: 'BakeSlots',
+      columns: [
+        'id',
+        'date',
+        'location_id',
+        'total_capacity',
+        'current_orders',
+        'cutoff_time',
+        'is_open',
+        'manually_closed_by',
+        'manually_closed_at',
+        'created_at',
+        'updated_at',
+      ],
+    },
+    {
+      table: 'flavors',
+      sheet: 'Flavors',
+      columns: [
+        'id',
+        'name',
+        'description',
+        'sizes',
+        'recipe_id',
+        'is_active',
+        'season',
+        'sort_order',
+        'image_url',
+        'estimated_cost',
+        'created_at',
+        'updated_at',
+      ],
+    },
+    {
+      table: 'locations',
+      sheet: 'Locations',
+      columns: [
+        'id',
+        'name',
+        'address',
+        'description',
+        'is_active',
+        'sort_order',
+        'created_at',
+        'updated_at',
+      ],
+    },
+    {
+      table: 'extra_production',
+      sheet: 'ExtraProduction',
+      columns: [
+        'id',
+        'bake_slot_id',
+        'production_date',
+        'flavor_id',
+        'quantity',
+        'disposition',
+        'sale_price',
+        'total_revenue',
+        'notes',
+        'created_by',
+        'created_at',
+        'updated_at',
+      ],
+    },
+    {
+      table: 'flavor_caps',
+      sheet: 'FlavorCaps',
+      columns: ['id', 'bake_slot_id', 'flavor_id', 'max_quantity', 'current_quantity'],
+    },
+    {
+      table: 'bake_slot_locations',
+      sheet: 'BakeSlotLocations',
+      columns: ['id', 'bake_slot_id', 'location_id', 'created_at'],
+    },
+    {
+      table: 'recipes',
+      sheet: 'Recipes',
+      columns: [
+        'id',
+        'name',
+        'flavor_id',
+        'base_ingredients',
+        'fold_ingredients',
+        'lamination_ingredients',
+        'steps',
+        'yields_loaves',
+        'loaf_size',
+        'total_cost',
+        'cost_per_loaf',
+        'notes',
+        'season',
+        'source',
+        'prep_time_minutes',
+        'bake_time_minutes',
+        'bake_temp',
+        'prep_instructions',
+        'bake_instructions',
+        'created_at',
+        'updated_at',
+      ],
+    },
+    {
+      table: 'ingredients',
+      sheet: 'Ingredients',
+      columns: [
+        'id',
+        'name',
+        'unit',
+        'cost_per_unit',
+        'package_price',
+        'package_size',
+        'package_unit',
+        'vendor',
+        'category',
+        'created_at',
+        'updated_at',
+      ],
+    },
+    {
+      table: 'recipe_ingredients',
+      sheet: 'RecipeIngredients',
+      columns: ['id', 'recipe_id', 'ingredient_id', 'quantity', 'unit', 'phase'],
+    },
+    {
+      table: 'overhead_settings',
+      sheet: 'OverheadSettings',
+      columns: ['id', 'packaging_per_loaf', 'utilities_per_loaf', 'updated_at'],
+    },
+    // Also push Orders and Customers (desktop can modify status, credits, etc.)
+    {
+      table: 'orders',
+      sheet: 'Orders',
+      columns: [
+        'id',
+        'customer_id',
+        'bake_slot_id',
+        'pickup_location_id',
+        'items',
+        'total_amount',
+        'status',
+        'payment_method',
+        'payment_status',
+        'customer_notes',
+        'admin_notes',
+        'credit_applied',
+        'adjustment_reason',
+        'created_at',
+        'updated_at',
+        'cutoff_at',
+      ],
+    },
+    {
+      table: 'customers',
+      sheet: 'Customers',
+      columns: [
+        'id',
+        'first_name',
+        'last_name',
+        'email',
+        'phone',
+        'notification_pref',
+        'sms_opt_in',
+        'sms_opt_in_date',
+        'has_account',
+        'credit_balance',
+        'total_orders',
+        'total_spent',
+        'first_order_date',
+        'last_order_date',
+        'created_at',
+        'updated_at',
+      ],
+    },
+  ];
+
+  for (const { table, sheet, columns } of pushTables) {
+    try {
+      log('info', `Pushing ${table} to ${sheet}...`);
+      const rows = readLocalTable(table, columns);
+      await writeSheet(sheet, columns, rows);
+      log('info', `Pushed ${rows.length} rows to ${sheet}`);
+    } catch (error) {
+      log('error', `Failed to push ${table} to ${sheet}`, { error });
+      // Continue with other tables even if one fails
+    }
+  }
+}
+
 export async function initSheetsSync(): Promise<void> {
   const config = getConfig();
   if (config) {
@@ -245,9 +557,12 @@ export async function syncAll(): Promise<void> {
   notifyRenderer();
 
   try {
-    log('info', 'Starting full sync from Google Sheets...');
+    log('info', 'Starting full sync with Google Sheets...');
 
-    // Pull from Sheets
+    // Push local data TO Sheets first (backup)
+    await pushToSheets();
+
+    // Then pull new orders/customers FROM Sheets (from order form)
     await pullFromSheets();
 
     syncStatus.lastSync = new Date().toISOString();
