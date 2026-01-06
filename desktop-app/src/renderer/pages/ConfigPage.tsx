@@ -368,6 +368,19 @@ function ConfigPage() {
     }
   }
 
+  async function duplicateFlavor(flavor: Flavor) {
+    try {
+      const result = await window.api.duplicateFlavor(flavor.id);
+      if (result.success) {
+        loadAll();
+      } else {
+        alert(result.error || 'Failed to duplicate flavor');
+      }
+    } catch (error) {
+      console.error('Failed to duplicate flavor:', error);
+    }
+  }
+
   function addSize() {
     setFlavorForm({
       ...flavorForm,
@@ -731,6 +744,13 @@ function ConfigPage() {
                               onClick={() => toggleFlavor(flavor.id, !flavor.is_active)}
                             >
                               {flavor.is_active ? 'Deactivate' : 'Activate'}
+                            </button>
+                            <button
+                              className="btn btn-small btn-secondary"
+                              onClick={() => duplicateFlavor(flavor)}
+                              title="Create a copy of this flavor and its recipe"
+                            >
+                              Duplicate
                             </button>
                             <button
                               className="btn btn-small btn-danger"

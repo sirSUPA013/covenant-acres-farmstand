@@ -5,7 +5,7 @@
 
 import { app, BrowserWindow, ipcMain, shell } from 'electron';
 import path from 'path';
-import { initDatabase } from './database';
+import { initDatabase, isPortable } from './database';
 import { initSheetsSync } from './sheets-sync';
 import { setupIpcHandlers } from './ipc-handlers';
 import { initLogger, log } from './logger';
@@ -77,9 +77,13 @@ async function initialize(): Promise<void> {
     setupIpcHandlers();
     log('info', 'IPC handlers registered');
 
-    // Start Google Sheets sync
-    initSheetsSync();
-    log('info', 'Sheets sync initialized');
+    // Start Google Sheets sync (skip in portable/demo mode)
+    if (!isPortable()) {
+      initSheetsSync();
+      log('info', 'Sheets sync initialized');
+    } else {
+      log('info', 'Skipping Sheets sync (portable/demo mode)');
+    }
 
     // Create window
     await createWindow();

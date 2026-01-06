@@ -5,13 +5,24 @@ node_modules/
 
 # Build outputs
 dist/
+dist-electron/
 build/
 out/
 *.exe
 *.dmg
 *.AppImage
 
-# Local data (not committed)
+# Packaged deliverables (large files)
+*.zip
+delivery/Covenant Acres Farmstand/
+Hillshire Sourdough Demo/
+
+# Database files
+*.db
+*.db-wal
+*.db-shm
+
+# Local data
 desktop-app/data/
 logs/
 
@@ -22,10 +33,10 @@ logs/
 *.pem
 credentials.json
 token.json
+docs/service-account-credentials.json
 
-# Developer-only files (DO NOT COMMIT)
-docs/
-DEV_NOTES.md
+# Developer-only files (sensitive)
+docs/DEV_NOTES.md
 
 # IDE
 .idea/
@@ -45,10 +56,9 @@ coverage/
 *.temp
 temp/
 
-# Logs (local only)
+# Logs
 *.log
-logs/
 
-# Package manager locks (keep one)
+# Package manager locks (keep package-lock.json only)
 yarn.lock
 pnpm-lock.yaml

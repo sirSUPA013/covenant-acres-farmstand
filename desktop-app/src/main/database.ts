@@ -5,18 +5,36 @@
 
 import Database from 'better-sqlite3';
 import path from 'path';
+import fs from 'fs';
 import { app } from 'electron';
 import { log } from './logger';
 
 let db: Database.Database | null = null;
+let isPortableMode = false;
 
 export function getDb(): Database.Database {
   if (!db) throw new Error('Database not initialized');
   return db;
 }
 
+export function isPortable(): boolean {
+  return isPortableMode;
+}
+
 export async function initDatabase(): Promise<void> {
-  const dbPath = path.join(app.getPath('userData'), 'covenant-acres.db');
+  // Check for portable mode: look for data/covenant-acres.db next to the executable
+  const exeDir = path.dirname(app.getPath('exe'));
+  const portableDbPath = path.join(exeDir, 'data', 'covenant-acres.db');
+
+  let dbPath: string;
+  if (fs.existsSync(portableDbPath)) {
+    dbPath = portableDbPath;
+    isPortableMode = true;
+    log('info', 'Running in PORTABLE/DEMO mode');
+  } else {
+    dbPath = path.join(app.getPath('userData'), 'covenant-acres.db');
+  }
+
   log('info', `Initializing database at ${dbPath}`);
 
   db = new Database(dbPath);

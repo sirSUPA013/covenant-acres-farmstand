@@ -33,6 +33,7 @@ contextBridge.exposeInMainWorld('api', {
   createFlavor: (data: object) => ipcRenderer.invoke('flavors:create', data),
   updateFlavor: (id: string, data: object) => ipcRenderer.invoke('flavors:update', id, data),
   deleteFlavor: (id: string) => ipcRenderer.invoke('flavors:delete', id),
+  duplicateFlavor: (id: string) => ipcRenderer.invoke('flavors:duplicate', id),
 
   // Locations
   getLocations: () => ipcRenderer.invoke('locations:getAll'),
@@ -83,6 +84,7 @@ contextBridge.exposeInMainWorld('api', {
   getSyncStatus: () => ipcRenderer.invoke('sync:status'),
 
   // Settings/Config
+  getPublicSettings: () => ipcRenderer.invoke('settings:getPublic'),
   getSettings: () => ipcRenderer.invoke('settings:get'),
   saveSettings: (data: object) => ipcRenderer.invoke('settings:save', data),
   testGoogleConnection: () => ipcRenderer.invoke('settings:testGoogle'),
@@ -166,6 +168,7 @@ declare global {
       createFlavor: (data: object) => Promise<string>;
       updateFlavor: (id: string, data: object) => Promise<void>;
       deleteFlavor: (id: string) => Promise<void>;
+      duplicateFlavor: (id: string) => Promise<{ success: boolean; id?: string; name?: string; error?: string }>;
 
       getLocations: () => Promise<unknown[]>;
       createLocation: (data: object) => Promise<string>;
@@ -210,6 +213,7 @@ declare global {
       syncNow: () => Promise<void>;
       getSyncStatus: () => Promise<object>;
 
+      getPublicSettings: () => Promise<{ businessName: string; isPortable: boolean }>;
       getSettings: () => Promise<object>;
       saveSettings: (data: object) => Promise<void>;
       testGoogleConnection: () => Promise<boolean>;

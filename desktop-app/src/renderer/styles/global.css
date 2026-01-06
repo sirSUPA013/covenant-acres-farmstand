@@ -84,6 +84,14 @@ body {
   margin-bottom: var(--spacing-sm);
 }
 
+.app-logo-text {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: white;
+  text-align: center;
+  padding: var(--spacing-sm) 0;
+}
+
 .app-subtitle {
   font-size: 0.75rem;
   opacity: 0.8;

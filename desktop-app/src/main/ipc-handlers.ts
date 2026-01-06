@@ -417,6 +417,90 @@ export function setupIpcHandlers(): void {
     }
   });
 
+  ipcMain.handle('flavors:duplicate', async (_event, id) => {
+    const db = getDb();
+    const now = new Date().toISOString();
+
+    // Get the source flavor
+    const sourceFlavor = db.prepare('SELECT * FROM flavors WHERE id = ?').get(id) as Record<string, unknown> | undefined;
+    if (!sourceFlavor) {
+      return { success: false, error: 'Flavor not found' };
+    }
+
+    // Generate new IDs
+    const newFlavorId = `flav-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+    const newRecipeId = `rec-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+
+    // Generate unique name
+    let baseName = `${sourceFlavor.name} (Copy)`;
+    let copyNum = 1;
+    while (db.prepare('SELECT COUNT(*) as count FROM flavors WHERE name = ?').get(baseName) as { count: number }) {
+      if ((db.prepare('SELECT COUNT(*) as count FROM flavors WHERE name = ?').get(baseName) as { count: number }).count === 0) break;
+      copyNum++;
+      baseName = `${sourceFlavor.name} (Copy ${copyNum})`;
+    }
+
+    // Get and duplicate the recipe if it exists
+    if (sourceFlavor.recipe_id) {
+      const sourceRecipe = db.prepare('SELECT * FROM recipes WHERE id = ?').get(sourceFlavor.recipe_id as string) as Record<string, unknown> | undefined;
+      if (sourceRecipe) {
+        db.prepare(`
+          INSERT INTO recipes (id, name, flavor_id, base_ingredients, fold_ingredients, lamination_ingredients,
+            steps, yields_loaves, loaf_size, total_cost, cost_per_loaf, notes, season, source,
+            prep_time_minutes, bake_time_minutes, bake_temp, prep_instructions, bake_instructions,
+            created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          newRecipeId,
+          `${baseName} Recipe`,
+          newFlavorId,
+          sourceRecipe.base_ingredients || '[]',
+          sourceRecipe.fold_ingredients || '[]',
+          sourceRecipe.lamination_ingredients || '[]',
+          sourceRecipe.steps || '[]',
+          sourceRecipe.yields_loaves || 1,
+          sourceRecipe.loaf_size || '',
+          sourceRecipe.total_cost || null,
+          sourceRecipe.cost_per_loaf || null,
+          sourceRecipe.notes || '',
+          sourceRecipe.season || null,
+          sourceRecipe.source || null,
+          sourceRecipe.prep_time_minutes || null,
+          sourceRecipe.bake_time_minutes || null,
+          sourceRecipe.bake_temp || null,
+          sourceRecipe.prep_instructions || null,
+          sourceRecipe.bake_instructions || null,
+          now,
+          now
+        );
+      }
+    }
+
+    // Create the new flavor
+    db.prepare(`
+      INSERT INTO flavors (id, name, description, sizes, recipe_id, is_active, season, sort_order, image_url, estimated_cost, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      newFlavorId,
+      baseName,
+      sourceFlavor.description || '',
+      sourceFlavor.sizes || '[]',
+      sourceFlavor.recipe_id ? newRecipeId : null,
+      sourceFlavor.is_active,
+      sourceFlavor.season || 'year_round',
+      (sourceFlavor.sort_order as number || 0) + 1,
+      sourceFlavor.image_url || null,
+      sourceFlavor.estimated_cost || null,
+      now,
+      now
+    );
+
+    logAudit('FLAVOR_DUPLICATED', 'flavors', newFlavorId, `Duplicated from ${sourceFlavor.name}`);
+    log('info', 'Flavor duplicated', { sourceId: id, newFlavorId, newRecipeId, name: baseName });
+
+    return { success: true, id: newFlavorId, name: baseName };
+  });
+
   // Locations
   ipcMain.handle('locations:getAll', async () => {
     const db = getDb();
@@ -1740,6 +1824,17 @@ export function setupIpcHandlers(): void {
     }
 
     return totals;
+  });
+
+  // Public settings (available without login - for lock screen branding)
+  ipcMain.handle('settings:getPublic', async () => {
+    const { isPortable } = require('./database');
+    const db = getDb();
+    const settings = db.prepare('SELECT business_name FROM settings WHERE id = 1').get() as { business_name?: string } | undefined;
+    return {
+      businessName: settings?.business_name || 'Bakery Admin',
+      isPortable: isPortable()
+    };
   });
 
   log('info', 'IPC handlers registered');

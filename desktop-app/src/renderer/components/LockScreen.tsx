@@ -24,11 +24,26 @@ function LockScreen({ onUnlock }: LockScreenProps) {
   const [showDevSetup, setShowDevSetup] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [businessName, setBusinessName] = useState('Admin Portal');
+  const [isPortable, setIsPortable] = useState(false);
   const pinInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     checkSetup();
+    loadPublicSettings();
   }, []);
+
+  async function loadPublicSettings() {
+    try {
+      const settings = await window.api.getPublicSettings();
+      if (settings.businessName) {
+        setBusinessName(settings.businessName);
+      }
+      setIsPortable(settings.isPortable || false);
+    } catch (e) {
+      // Use default if settings unavailable
+    }
+  }
 
   useEffect(() => {
     // Focus PIN input when ready
@@ -127,8 +142,8 @@ function LockScreen({ onUnlock }: LockScreenProps) {
   return (
     <div className="lock-screen">
       <div className="lock-card">
-        <img src={logo} alt="Covenant Acres" className="lock-logo" />
-        <h1 className="lock-title">Covenant Acres</h1>
+        {!isPortable && <img src={logo} alt={businessName} className="lock-logo" />}
+        <h1 className="lock-title">{businessName}</h1>
         <p className="lock-subtitle">Admin Portal</p>
 
         {needsSetup ? (

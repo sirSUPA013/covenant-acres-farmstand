@@ -249,15 +249,15 @@ const now = new Date().toISOString();
 // 1. Admin Users
 console.log('Creating admin users...');
 const adminUsers = [
-  { id: 'admin-demo1', name: 'Sam Developer', pin: '1111', isDev: 1, isOwner: 1 },
-  { id: 'admin-demo2', name: 'Stephanie Owner', pin: '2222', isDev: 0, isOwner: 1 },
-  { id: 'admin-demo3', name: 'Shane Admin', pin: '3333', isDev: 0, isOwner: 0, permissions: JSON.stringify({
+  { id: 'admin-demo1', name: 'SJY', pin: '1111', isDev: 1, isOwner: 1 },
+  { id: 'admin-demo2', name: 'Demo Owner', pin: '2222', isDev: 0, isOwner: 1 },
+  { id: 'admin-demo3', name: 'Demo Admin', pin: '3333', isDev: 0, isOwner: 0, permissions: JSON.stringify({
     viewOrders: true, manageOrders: true, viewCustomers: true, manageCustomers: true,
     viewBakeSlots: true, manageBakeSlots: true, viewFlavors: true, manageFlavors: false,
     viewRecipes: true, manageRecipes: false, viewAnalytics: true, viewSettings: false,
     manageSettings: false, viewUsers: false, manageUsers: false, viewAuditLog: false
   })},
-  { id: 'admin-demo4', name: 'Helper Staff', pin: '4444', isDev: 0, isOwner: 0, permissions: JSON.stringify({
+  { id: 'admin-demo4', name: 'Demo Staff', pin: '4444', isDev: 0, isOwner: 0, permissions: JSON.stringify({
     viewOrders: true, manageOrders: true, viewCustomers: true, manageCustomers: false,
     viewBakeSlots: true, manageBakeSlots: false, viewFlavors: true, manageFlavors: false,
     viewRecipes: true, manageRecipes: false, viewAnalytics: false, viewSettings: false,
@@ -278,7 +278,7 @@ adminUsers.forEach(u => {
 console.log('Creating locations...');
 const locations = [
   { id: 'loc-demo1', name: "Saturday Farmer's Market", address: '100 Main Street, Downtown' },
-  { id: 'loc-demo2', name: 'Farm Pickup', address: '4521 Country Road, Covenant Acres Farm' },
+  { id: 'loc-demo2', name: 'Farm Pickup', address: '4521 Country Road' },
   { id: 'loc-demo3', name: 'Wednesday Market', address: '250 Oak Avenue, Community Center' },
 ];
 
@@ -761,10 +761,10 @@ db.prepare(`
     bake_day_setup_minutes, bake_day_per_loaf_minutes, bake_day_cleanup_minutes,
     misc_production_per_loaf_minutes, created_at, updated_at
   ) VALUES (
-    1, 'Covenant Acres Farmstand', 'hello@covenantacresin.com', '(555) 123-4567',
+    1, 'Hillshire Sourdough', 'hello@hillshiresourdough.demo', '(555) 123-4567',
     48, 1,
-    1, 0, 'hello@covenantacresin.com',
-    1, '@CovenantAcres', '$CovenantAcres', 'pay@covenantacresin.com',
+    1, 0, 'hello@hillshiresourdough.demo',
+    1, '@HillshireSourdough', '$HillshireSourdough', 'pay@hillshiresourdough.demo',
     60, 8, 45, 15, ?, ?
   )
 `).run(now, now);
@@ -816,10 +816,10 @@ db.close();
 console.log('\n✓ Demo database created successfully!');
 console.log(`  Location: ${DB_PATH}`);
 console.log('\nDemo Users:');
-console.log('  PIN 1111 - Sam Developer (full access)');
-console.log('  PIN 2222 - Stephanie Owner (owner access)');
-console.log('  PIN 3333 - Shane Admin (admin access)');
-console.log('  PIN 4444 - Helper Staff (limited access)');
+console.log('  PIN 1111 - SJY (developer - full access)');
+console.log('  PIN 2222 - Demo Owner (owner access)');
+console.log('  PIN 3333 - Demo Admin (admin access)');
+console.log('  PIN 4444 - Demo Staff (limited access)');
 console.log(`\nData Summary:`);
 console.log(`  - ${locations.length} locations`);
 console.log(`  - ${flavors.length} flavors with recipes`);

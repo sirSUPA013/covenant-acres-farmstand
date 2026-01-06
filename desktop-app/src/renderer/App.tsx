@@ -36,6 +36,8 @@ interface AdminUser {
 function App() {
   const [isLocked, setIsLocked] = useState(true);
   const [currentUser, setCurrentUser] = useState<AdminUser | null>(null);
+  const [businessName, setBusinessName] = useState('Admin Portal');
+  const [isPortable, setIsPortable] = useState(false);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>({
     isOnline: true,
     lastSync: null,
@@ -54,6 +56,14 @@ function App() {
     // Get initial status
     window.api.getSyncStatus().then((status) => {
       setSyncStatus(status as SyncStatus);
+    });
+
+    // Load business name and portable mode
+    window.api.getPublicSettings().then((settings) => {
+      if (settings.businessName) {
+        setBusinessName(settings.businessName);
+      }
+      setIsPortable(settings.isPortable || false);
     });
 
     return unsubscribe;
@@ -98,7 +108,8 @@ function App() {
       {/* Sidebar */}
       <aside className="sidebar">
         <div className="sidebar-header">
-          <img src={logo} alt="Covenant Acres" className="app-logo" />
+          {!isPortable && <img src={logo} alt={businessName} className="app-logo" />}
+          {isPortable && <div className="app-logo-text">{businessName}</div>}
         </div>
 
         <nav className="sidebar-nav">

@@ -1,0 +1,210 @@
+================================================================================
+        COVENANT ACRES FARMSTAND - INSTALLATION GUIDE
+================================================================================
+
+Welcome! This guide will help you install the bakery management app on your
+Windows computer.
+
+WHAT'S INCLUDED IN THIS PACKAGE:
+--------------------------------
+1. "Covenant Acres Farmstand" folder - The application
+2. "covenant-acres.db" - Your pre-configured database with your accounts
+3. "setup-database.bat" - Helper script to install the database
+4. This guide
+
+
+================================================================================
+                        INSTALLATION STEPS
+================================================================================
+
+STEP 1: Copy the Application Folder
+------------------------------------
+1. Copy the entire "Covenant Acres Farmstand" folder to a location on your
+   computer. Good options include:
+
+   - C:\Program Files\Covenant Acres Farmstand
+   - Your Desktop
+   - Your Documents folder
+
+2. Inside the folder, find "Covenant Acres Farmstand.exe"
+
+3. Right-click it and select "Create shortcut"
+
+4. Move the shortcut to your Desktop for easy access
+
+
+STEP 2: Run the App for the First Time
+--------------------------------------
+1. Double-click "Covenant Acres Farmstand.exe" to start the app
+
+2. Windows may show a security warning saying "Windows protected your PC"
+   - Click "More info"
+   - Click "Run anyway"
+
+   (This warning appears because the app isn't signed with a Microsoft
+   certificate. It's safe to run.)
+
+3. The app will open. You can close it now.
+
+4. This first run creates the necessary folders for your database.
+
+
+STEP 3: Install Your Database
+------------------------------------
+1. Go back to the folder where you have:
+   - covenant-acres.db
+   - setup-database.bat
+
+2. Double-click "setup-database.bat"
+
+3. The script will:
+   - Find where the app stores its data
+   - Copy your database there
+   - Show you a confirmation when done
+
+4. If it says "App data folder not found":
+   - Make sure you ran the app in Step 2
+   - Close the script and try again
+
+
+STEP 4: Log In
+---------------------------------
+1. Open "Covenant Acres Farmstand.exe" again
+
+2. You'll see the login screen
+
+3. Your accounts are already set up:
+
+   PIN 2222 - Stephanie (Owner - full access)
+   PIN 3333 - Shane (Admin access)
+   PIN 4444 - Helper Staff (Limited access)
+
+4. Enter your PIN and you're in!
+
+Note: You can change PINs and add/remove users in the Settings page.
+
+
+================================================================================
+                        WHAT'S PRE-CONFIGURED
+================================================================================
+
+Your database includes:
+
+ADMIN ACCOUNTS:
+- Stephanie Owner (PIN: 2222) - Full access
+- Shane Admin (PIN: 3333) - Orders, customers, bake slots, view recipes
+- Helper Staff (PIN: 4444) - Limited order management
+
+PICKUP LOCATIONS:
+- Saturday Farmer's Market
+- Farm Pickup
+- Wednesday Market
+
+BREAD FLAVORS:
+- Classic Sourdough ($8.00)
+- Garlic Cheddar ($10.00)
+- Jalapeno Cheddar ($10.00)
+- Cinnamon Raisin ($10.00)
+- Double Chocolate ($12.00)
+- Rosemary Olive Oil ($10.00)
+- Honey Wheat ($9.00)
+- Pumpkin Spice ($12.00)
+
+INGREDIENTS LIBRARY:
+- 18 common baking ingredients with costs
+
+PAYMENT LINKS:
+- Venmo: @CovenantAcres
+- Cash App: $CovenantAcres
+- Zelle: pay@covenantacresin.com
+
+NO TEST DATA:
+- No old orders
+- No test customers
+- Clean start for real business use
+
+You can customize all of these in the Settings page.
+
+
+================================================================================
+                        REMOTE SUPPORT SETUP
+================================================================================
+
+Sam can help you remotely when you run into issues. Here's how to set it up:
+
+STEP 1: Install TeamViewer
+--------------------------
+1. Go to: https://www.teamviewer.com/en/download/windows/
+
+2. Click "Download for Free"
+
+3. Run the installer and choose "Personal / Non-commercial use"
+
+4. Follow the prompts to complete installation
+
+STEP 2: When You Need Help
+--------------------------
+1. Open TeamViewer
+
+2. You'll see:
+   - Your ID (a 9-digit number)
+   - Your Password (changes each session)
+
+3. Text or call Sam with these numbers
+
+4. Sam will connect and can see your screen to help
+
+5. You can watch everything Sam does - nothing happens without you seeing it
+
+SECURITY NOTE:
+- Only share your TeamViewer ID/password with Sam when you need help
+- The password changes each time you restart TeamViewer
+- You can end the session anytime by closing TeamViewer
+
+
+================================================================================
+                           GETTING UPDATES
+================================================================================
+
+When Sam releases a new version:
+
+1. Sam will send you a Google Drive link
+
+2. Download the new "Covenant Acres Farmstand" folder
+
+3. Delete your old "Covenant Acres Farmstand" folder
+
+4. Replace it with the new one
+
+5. Your data is safe - it's stored separately from the app
+
+IMPORTANT: Do NOT delete the database in your AppData folder. That's your
+real business data. The app folder can always be replaced.
+
+
+================================================================================
+                              BACKUPS
+================================================================================
+
+Your data is stored in:
+C:\Users\[YourName]\AppData\Roaming\Covenant Acres Farmstand\covenant-acres.db
+
+To back up your data:
+1. Close the app completely
+2. Copy the "covenant-acres.db" file to a safe location
+   (USB drive, Google Drive, etc.)
+
+We recommend backing up weekly or after busy periods.
+
+If Something Goes Wrong:
+- Sam can help recover or fix database issues via TeamViewer
+- You can also email the database file to Sam for repair
+
+
+================================================================================
+
+Thank you for using Covenant Acres Farmstand!
+
+Questions? Contact Sam for support.
+
+================================================================================

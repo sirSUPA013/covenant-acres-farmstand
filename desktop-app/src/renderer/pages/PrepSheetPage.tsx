@@ -66,6 +66,7 @@ function PrepSheetPage() {
   const [selectedSlot, setSelectedSlot] = useState<string>('');
   const [prepSheet, setPrepSheet] = useState<PrepSheetItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const [businessName, setBusinessName] = useState('Bakery');
   const printRef = useRef<HTMLDivElement>(null);
 
   // Open capacity tracking
@@ -83,7 +84,19 @@ function PrepSheetPage() {
   useEffect(() => {
     loadBakeSlots();
     loadFlavors();
+    loadBusinessName();
   }, []);
+
+  async function loadBusinessName() {
+    try {
+      const settings = await window.api.getPublicSettings();
+      if (settings.businessName) {
+        setBusinessName(settings.businessName);
+      }
+    } catch (error) {
+      // Use default
+    }
+  }
 
   async function loadFlavors() {
     try {
@@ -298,7 +311,7 @@ function PrepSheetPage() {
         <div ref={printRef} className="prep-sheet-content">
           {/* Header - for print */}
           <div className="print-header print-only">
-            <h1>Covenant Acres Farmstand</h1>
+            <h1>{businessName}</h1>
             <h2>Bake Day Prep Sheet</h2>
             {slotInfo && (
               <p>

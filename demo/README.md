@@ -1,6 +1,38 @@
-# Covenant Acres Farmstand - Demo Version
+# Hillshire Sourdough - Demo Version
 
-This folder contains a demonstration version of the Covenant Acres Farmstand bakery management system. It includes pre-populated data to showcase all features without affecting any real data.
+This folder contains a demonstration version of the bakery management system. It includes pre-populated data to showcase all features without affecting any real data.
+
+## Quick Start
+
+### Run Demo Admin Portal
+
+Double-click `run-demo-admin.bat` or run from command line:
+
+```
+demo\run-demo-admin.bat
+```
+
+This copies the demo database and launches the admin portal.
+
+### View Demo Order Form
+
+Open in any browser:
+```
+demo\demo-order-form\index.html
+```
+
+---
+
+## Demo Login Credentials
+
+| PIN  | User | Role | Access Level |
+|------|------|------|--------------|
+| 1111 | SJY | Developer | Full access to all features |
+| 2222 | Demo Owner | Owner | Full access except developer tools |
+| 3333 | Demo Admin | Admin | Orders, customers, bake slots, flavors (view), recipes (view), analytics |
+| 4444 | Demo Staff | Staff | Orders (manage), customers (view), bake slots (view), flavors (view), recipes (view) |
+
+---
 
 ## What's Included
 
@@ -11,79 +43,22 @@ A pre-populated SQLite database with 90 days of realistic bakery data:
 - **3 Pickup Locations** (Saturday Market, Farm Pickup, Wednesday Market)
 - **8 Bread Flavors** with full recipes and ingredient costs
 - **18 Ingredients** in the ingredients library
-- **22 Bake Slots** over 90 days (1-2 per week)
+- **24 Bake Slots** over 90 days (1-2 per week)
 - **30 Fictional Customers** (popular characters from Disney, Marvel, Harry Potter, etc.)
-- **400+ Orders** with various statuses and payment states
+- **370+ Orders** with various statuses and payment states
 - **Extra Production Entries** showing waste, gifts, and walk-up sales
 - **Audit Log** with sample activity
 - **Pre-configured Settings** (business info, payment links, etc.)
 
 ### 2. Demo Order Form (`demo-order-form/`)
-A standalone HTML/CSS/JS order form that demonstrates the customer ordering experience. No backend required - just open `index.html` in a browser.
+A standalone HTML/CSS/JS order form demonstrating the customer ordering experience. No backend required.
 
 ### 3. Seed Script (`seed-demo-data.js`)
-The script used to generate the demo data. You can re-run this to regenerate fresh demo data.
+The script used to generate the demo data. Re-run to regenerate fresh demo data:
 
----
-
-## Demo Login Credentials
-
-| PIN  | User | Role | Access Level |
-|------|------|------|--------------|
-| 1111 | Sam Developer | Developer | Full access to all features |
-| 2222 | Stephanie Owner | Owner | Full access except developer tools |
-| 3333 | Shane Admin | Admin | Orders, customers, bake slots, flavors (view only), recipes (view only), analytics |
-| 4444 | Helper Staff | Staff | Orders (manage), customers (view), bake slots (view), flavors (view), recipes (view) |
-
----
-
-## Running the Demo
-
-### Option A: Use Pre-Built Demo Database
-
-1. **Copy the demo database** to replace the app's database:
-   ```
-   # Backup your real database first!
-   cp desktop-app/bakery.db desktop-app/bakery.db.backup
-
-   # Replace with demo database
-   cp demo/demo-database.db desktop-app/bakery.db
-   ```
-
-2. **Start the desktop app**:
-   ```
-   cd desktop-app
-   npm run dev
-   ```
-
-3. **Login** with any of the demo PINs above
-
-### Option B: View Demo Order Form Only
-
-1. **Open the demo order form** in any browser:
-   ```
-   demo/demo-order-form/index.html
-   ```
-
-   Or use a local server:
-   ```
-   cd demo/demo-order-form
-   npx serve .
-   ```
-
-2. Walk through the ordering process - no backend required!
-
-### Option C: Regenerate Demo Data
-
-If you want fresh demo data:
-
-1. **Run the seed script** from the desktop-app folder:
-   ```
-   cd desktop-app
-   node ../demo/seed-demo-data.js
-   ```
-
-2. A new `demo-database.db` will be created in the demo folder
+```
+node demo/seed-demo-data.js
+```
 
 ---
 
@@ -133,17 +108,6 @@ The demo data includes a realistic mix of:
 
 ---
 
-## Resetting to Production
-
-To switch back to your real data:
-
-```bash
-# Restore your real database
-cp desktop-app/bakery.db.backup desktop-app/bakery.db
-```
-
----
-
 ## Notes
 
 - The demo database is completely self-contained
@@ -153,21 +117,4 @@ cp desktop-app/bakery.db.backup desktop-app/bakery.db
 
 ---
 
-## Screenshots
-
-After running the demo, you can explore:
-
-1. **Dashboard** - Overview of upcoming bake slots and recent orders
-2. **Orders** - Filter, search, bulk update, and export orders
-3. **Customers** - View customer history and manage credits
-4. **Bake Slots** - Calendar view with capacity management
-5. **Flavors** - Product catalog with pricing
-6. **Recipes** - Full recipes with ingredient costs
-7. **Analytics** - Revenue, profit margins, and trends
-8. **Production** - Track extra loaves (sold, gifted, wasted)
-9. **Settings** - Business configuration and payment links
-10. **Users** - Role-based access control
-
----
-
-*Demo created for Covenant Acres Farmstand management system*
+*Demo version of the bakery management system*

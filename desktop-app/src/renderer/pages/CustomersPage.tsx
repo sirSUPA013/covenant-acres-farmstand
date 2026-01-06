@@ -102,15 +102,15 @@ function CustomersPage() {
                   </td>
                   <td>{customer.email}</td>
                   <td>{customer.phone}</td>
-                  <td>{customer.total_orders}</td>
-                  <td>${customer.total_spent.toFixed(2)}</td>
+                  <td>{customer.total_orders || 0}</td>
+                  <td>${(customer.total_spent || 0).toFixed(2)}</td>
                   <td>
-                    {customer.credit_balance > 0 && (
+                    {(customer.credit_balance || 0) > 0 && (
                       <span style={{ color: 'green', fontWeight: 600 }}>
-                        ${customer.credit_balance.toFixed(2)}
+                        ${(customer.credit_balance || 0).toFixed(2)}
                       </span>
                     )}
-                    {customer.credit_balance === 0 && '-'}
+                    {(!customer.credit_balance || customer.credit_balance === 0) && '-'}
                   </td>
                   <td>
                     <button
@@ -154,17 +154,17 @@ function CustomersPage() {
               <div className="form-row">
                 <div className="form-group">
                   <label className="form-label">Total Orders</label>
-                  <p>{selectedCustomer.total_orders}</p>
+                  <p>{selectedCustomer.total_orders || 0}</p>
                 </div>
                 <div className="form-group">
                   <label className="form-label">Total Spent</label>
-                  <p>${selectedCustomer.total_spent.toFixed(2)}</p>
+                  <p>${(selectedCustomer.total_spent || 0).toFixed(2)}</p>
                 </div>
               </div>
 
               <div className="form-group">
                 <label className="form-label">
-                  Credit Balance: ${selectedCustomer.credit_balance.toFixed(2)}
+                  Credit Balance: ${(selectedCustomer.credit_balance || 0).toFixed(2)}
                 </label>
               </div>
 

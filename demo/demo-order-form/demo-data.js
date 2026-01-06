@@ -5,7 +5,7 @@
 
 const DEMO_LOCATIONS = [
   { id: 'loc-demo1', name: "Saturday Farmer's Market", address: '100 Main Street, Downtown' },
-  { id: 'loc-demo2', name: 'Farm Pickup', address: '4521 Country Road, Covenant Acres Farm' },
+  { id: 'loc-demo2', name: 'Farm Pickup', address: '4521 Country Road' },
   { id: 'loc-demo3', name: 'Wednesday Market', address: '250 Oak Avenue, Community Center' },
 ];
 
