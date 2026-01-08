@@ -221,6 +221,19 @@ function filterAllowedFields(data: Record<string, unknown>, allowedFields: Set<s
   return { fields, values };
 }
 
+// Helper to get flavor costs with overhead for analytics calculations
+function getFlavorCostsMap(db: ReturnType<typeof getDb>): Map<string, number> {
+  const overhead = db.prepare('SELECT * FROM overhead_settings WHERE id = 1').get() as { packaging_per_loaf: number; utilities_per_loaf: number } | undefined;
+  const overheadPerLoaf = (overhead?.packaging_per_loaf || 0) + (overhead?.utilities_per_loaf || 0);
+
+  const flavorCosts = new Map<string, number>();
+  const flavors = db.prepare('SELECT id, estimated_cost FROM flavors').all() as Array<{ id: string; estimated_cost: number | null }>;
+  flavors.forEach(f => {
+    flavorCosts.set(f.id, (f.estimated_cost || 0) + overheadPerLoaf);
+  });
+  return flavorCosts;
+}
+
 export function logAudit(action: string, entityType?: string | null, entityId?: string | null, details?: string) {
   const db = getDb();
   db.prepare(`
@@ -347,6 +360,15 @@ export function setupIpcHandlers(): void {
   });
 
   ipcMain.handle('orders:bulkUpdate', async (_event, ids: string[], data) => {
+    requireAuth('orders:bulkUpdate');
+
+    // Validate financial and status fields
+    const validation = validateOrderData(data);
+    if (!validation.valid) {
+      log('warn', 'Bulk order update validation failed', { error: validation.error, data });
+      throw new Error(validation.error);
+    }
+
     const db = getDb();
     const { fields, values } = filterAllowedFields(data, ALLOWED_ORDER_FIELDS);
     if (fields.length === 0) {
@@ -591,6 +613,7 @@ export function setupIpcHandlers(): void {
   });
 
   ipcMain.handle('bakeSlots:delete', async (_event, id) => {
+    requireAuth('bakeSlots:delete');
     const db = getDb();
     // Junction table entries will be deleted automatically due to ON DELETE CASCADE
     db.prepare('DELETE FROM bake_slots WHERE id = ?').run(id);
@@ -688,6 +711,7 @@ export function setupIpcHandlers(): void {
   });
 
   ipcMain.handle('flavors:delete', async (_event, id) => {
+    requireAuth('flavors:delete');
     const db = getDb();
     // Get the flavor to find its recipe_id
     const flavor = db.prepare('SELECT recipe_id FROM flavors WHERE id = ?').get(id) as { recipe_id: string } | undefined;
@@ -721,10 +745,15 @@ export function setupIpcHandlers(): void {
     // Generate unique name
     let baseName = `${sourceFlavor.name} (Copy)`;
     let copyNum = 1;
-    while (db.prepare('SELECT COUNT(*) as count FROM flavors WHERE name = ?').get(baseName) as { count: number }) {
-      if ((db.prepare('SELECT COUNT(*) as count FROM flavors WHERE name = ?').get(baseName) as { count: number }).count === 0) break;
+    const checkNameStmt = db.prepare('SELECT COUNT(*) as count FROM flavors WHERE name = ?');
+    while ((checkNameStmt.get(baseName) as { count: number }).count > 0) {
       copyNum++;
       baseName = `${sourceFlavor.name} (Copy ${copyNum})`;
+      if (copyNum > 100) {
+        // Safety limit to prevent runaway loop
+        baseName = `${sourceFlavor.name} (Copy ${Date.now()})`;
+        break;
+      }
     }
 
     // Get and duplicate the recipe if it exists
@@ -822,6 +851,7 @@ export function setupIpcHandlers(): void {
   });
 
   ipcMain.handle('locations:delete', async (_event, id) => {
+    requireAuth('locations:delete');
     const db = getDb();
     db.prepare('DELETE FROM locations WHERE id = ?').run(id);
     log('info', 'Location deleted', { id });
@@ -912,6 +942,7 @@ export function setupIpcHandlers(): void {
   });
 
   ipcMain.handle('recipes:delete', async (_event, id) => {
+    requireAuth('recipes:delete');
     const db = getDb();
     db.prepare('DELETE FROM recipes WHERE id = ?').run(id);
     log('info', 'Recipe deleted', { id });
@@ -988,6 +1019,7 @@ export function setupIpcHandlers(): void {
   });
 
   ipcMain.handle('ingredients:delete', async (_event, id) => {
+    requireAuth('ingredients:delete');
     const db = getDb();
     db.prepare('DELETE FROM ingredients WHERE id = ?').run(id);
     log('info', 'Ingredient deleted', { id });
@@ -1036,15 +1068,7 @@ export function setupIpcHandlers(): void {
 
   ipcMain.handle('analytics:profitByBakeSlot', async (_event, filters) => {
     const db = getDb();
-    const overhead = db.prepare('SELECT * FROM overhead_settings WHERE id = 1').get() as { packaging_per_loaf: number; utilities_per_loaf: number } | undefined;
-    const overheadPerLoaf = (overhead?.packaging_per_loaf || 0) + (overhead?.utilities_per_loaf || 0);
-
-    // Get flavor costs map
-    const flavorCosts = new Map<string, number>();
-    const flavors = db.prepare('SELECT id, estimated_cost FROM flavors').all() as Array<{ id: string; estimated_cost: number | null }>;
-    flavors.forEach(f => {
-      flavorCosts.set(f.id, (f.estimated_cost || 0) + overheadPerLoaf);
-    });
+    const flavorCosts = getFlavorCostsMap(db);
 
     // Build query
     let query = `
@@ -1132,16 +1156,8 @@ export function setupIpcHandlers(): void {
     const bakeDayCleanup = settings?.bake_day_cleanup_minutes ?? 45;
     const miscPerLoaf = settings?.misc_production_per_loaf_minutes ?? 15;
 
-    // Get overhead costs
-    const overhead = db.prepare('SELECT * FROM overhead_settings WHERE id = 1').get() as { packaging_per_loaf: number; utilities_per_loaf: number } | undefined;
-    const overheadPerLoaf = (overhead?.packaging_per_loaf || 0) + (overhead?.utilities_per_loaf || 0);
-
-    // Get flavor costs
-    const flavorCosts = new Map<string, number>();
-    const flavors = db.prepare('SELECT id, estimated_cost FROM flavors').all() as Array<{ id: string; estimated_cost: number | null }>;
-    flavors.forEach(f => {
-      flavorCosts.set(f.id, (f.estimated_cost || 0) + overheadPerLoaf);
-    });
+    // Get flavor costs with overhead
+    const flavorCosts = getFlavorCostsMap(db);
 
     // Build date filter
     let dateFilter = '';
@@ -2053,6 +2069,7 @@ export function setupIpcHandlers(): void {
   });
 
   ipcMain.handle('extraProduction:delete', async (_event, id) => {
+    requireAuth('extraProduction:delete');
     const db = getDb();
     db.prepare('DELETE FROM extra_production WHERE id = ?').run(id);
     logAudit('EXTRA_PRODUCTION_DELETED', 'extra_production', id);
