@@ -41,6 +41,77 @@ export function getCurrentUser() {
   return currentUser;
 }
 
+// Login rate limiting (brute force protection)
+const LOGIN_MAX_ATTEMPTS = 5;
+const LOGIN_LOCKOUT_MINUTES = 15;
+const LOGIN_BASE_DELAY_MS = 1000;
+
+interface LoginAttemptTracker {
+  failedAttempts: number;
+  lastAttemptTime: number;
+  lockedUntil: number | null;
+}
+
+const loginAttempts: LoginAttemptTracker = {
+  failedAttempts: 0,
+  lastAttemptTime: 0,
+  lockedUntil: null
+};
+
+function checkLoginRateLimit(): { allowed: boolean; waitMs?: number; message?: string } {
+  const now = Date.now();
+  
+  if (loginAttempts.lockedUntil && now < loginAttempts.lockedUntil) {
+    const remainingMs = loginAttempts.lockedUntil - now;
+    const remainingMinutes = Math.ceil(remainingMs / 60000);
+    return {
+      allowed: false,
+      waitMs: remainingMs,
+      message: 'Account locked. Try again in ' + remainingMinutes + ' minute' + (remainingMinutes > 1 ? 's' : '')
+    };
+  }
+  
+  if (loginAttempts.lockedUntil && now >= loginAttempts.lockedUntil) {
+    loginAttempts.lockedUntil = null;
+    loginAttempts.failedAttempts = 0;
+  }
+  
+  if (loginAttempts.failedAttempts > 0) {
+    const requiredDelay = LOGIN_BASE_DELAY_MS * Math.pow(2, loginAttempts.failedAttempts - 1);
+    const timeSinceLastAttempt = now - loginAttempts.lastAttemptTime;
+    
+    if (timeSinceLastAttempt < requiredDelay) {
+      return {
+        allowed: false,
+        waitMs: requiredDelay - timeSinceLastAttempt,
+        message: 'Please wait before trying again'
+      };
+    }
+  }
+  
+  return { allowed: true };
+}
+
+function recordLoginFailure(): void {
+  const now = Date.now();
+  loginAttempts.failedAttempts++;
+  loginAttempts.lastAttemptTime = now;
+  
+  if (loginAttempts.failedAttempts >= LOGIN_MAX_ATTEMPTS) {
+    loginAttempts.lockedUntil = now + (LOGIN_LOCKOUT_MINUTES * 60 * 1000);
+    log('warn', 'Login locked out due to too many failed attempts', {
+      attempts: loginAttempts.failedAttempts,
+      lockedUntilMinutes: LOGIN_LOCKOUT_MINUTES
+    });
+  }
+}
+
+function recordLoginSuccess(): void {
+  loginAttempts.failedAttempts = 0;
+  loginAttempts.lastAttemptTime = 0;
+  loginAttempts.lockedUntil = null;
+}
+
 // Field whitelists for SQL UPDATE operations (prevents SQL injection via field names)
 const ALLOWED_ORDER_FIELDS = new Set([
   'status', 'payment_status', 'payment_method', 'admin_notes', 'credit_applied',
@@ -57,6 +128,11 @@ const ALLOWED_BAKE_SLOT_FIELDS = new Set([
 
 const ALLOWED_LOCATION_FIELDS = new Set([
   'name', 'address', 'description', 'is_active', 'sort_order'
+]);
+
+// Flavor fields - note: sizes needs JSON stringify, isActive needs boolean conversion
+const ALLOWED_FLAVOR_FIELDS = new Set([
+  'name', 'description', 'sizes', 'isActive', 'season', 'sort_order', 'image_url', 'estimated_cost', 'recipe_id'
 ]);
 
 // Recipe fields use camelCase in API but snake_case in DB
@@ -496,7 +572,12 @@ export function setupIpcHandlers(): void {
     const updates: string[] = [];
     const values: unknown[] = [];
 
+    // Filter to only allowed fields (prevents SQL injection via field names)
     Object.entries(data).forEach(([key, value]) => {
+      if (!ALLOWED_FLAVOR_FIELDS.has(key)) {
+        log('warn', 'Flavor update attempted with disallowed field', { id, field: key });
+        return;
+      }
       if (key === 'sizes') {
         updates.push('sizes = ?');
         values.push(JSON.stringify(value));
@@ -509,11 +590,16 @@ export function setupIpcHandlers(): void {
       }
     });
 
+    if (updates.length === 0) {
+      log('warn', 'Flavor update attempted with no valid fields', { id, attempted: Object.keys(data) });
+      return;
+    }
+
     values.push(new Date().toISOString(), id);
     db.prepare(`UPDATE flavors SET ${updates.join(', ')}, updated_at = ? WHERE id = ?`).run(
       ...values
     );
-    log('info', 'Flavor updated', { id });
+    log('info', 'Flavor updated', { id, changes: updates.map(u => u.split(' ')[0]) });
   });
 
   ipcMain.handle('flavors:get', async (_event, id) => {
@@ -1528,6 +1614,13 @@ export function setupIpcHandlers(): void {
   });
 
   ipcMain.handle('admin:login', async (_event, pin: string) => {
+    // Check rate limiting first (brute force protection)
+    const rateLimitCheck = checkLoginRateLimit();
+    if (!rateLimitCheck.allowed) {
+      logAudit('LOGIN_BLOCKED', 'admin_users', null, 'Login blocked by rate limiting: ' + rateLimitCheck.message);
+      return { success: false, error: rateLimitCheck.message };
+    }
+
     const db = getDb();
     const pinHash = hashPin(pin);
 
@@ -1537,9 +1630,20 @@ export function setupIpcHandlers(): void {
     `).get(pinHash) as { id: string; name: string; is_developer: number; is_owner: number; permissions: string | null } | undefined;
 
     if (!user) {
-      logAudit('LOGIN_FAILED', 'admin_users', null, 'Invalid PIN attempt');
+      recordLoginFailure();
+      const attemptsRemaining = LOGIN_MAX_ATTEMPTS - loginAttempts.failedAttempts;
+      logAudit('LOGIN_FAILED', 'admin_users', null, 'Invalid PIN attempt (' + loginAttempts.failedAttempts + '/' + LOGIN_MAX_ATTEMPTS + ')');
+      
+      if (attemptsRemaining <= 0) {
+        return { success: false, error: 'Account locked for ' + LOGIN_LOCKOUT_MINUTES + ' minutes' };
+      } else if (attemptsRemaining <= 2) {
+        return { success: false, error: 'Invalid PIN. ' + attemptsRemaining + ' attempt' + (attemptsRemaining > 1 ? 's' : '') + ' remaining' };
+      }
       return { success: false, error: 'Invalid PIN' };
     }
+
+    // Successful login - reset rate limiting
+    recordLoginSuccess();
 
     // Update last login
     db.prepare('UPDATE admin_users SET last_login = ? WHERE id = ?')
