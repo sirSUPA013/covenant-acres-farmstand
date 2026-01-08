@@ -5,6 +5,7 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { readSheet, appendRow, updateRow } from './lib/sheets';
+import { ERROR_CODES, createErrorResponse } from './lib/errors';
 
 // ============ Data Types ============
 
@@ -178,14 +179,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!order?.id || !order?.bakeSlotId || !order?.items?.length) {
       return res.status(400).json({
         error: 'Invalid order data',
-        code: 'DATA-403'
+        code: ERROR_CODES.DATA_INVALID
       });
     }
 
     if (!customer?.firstName || !customer?.lastName || !customer?.email || !customer?.phone) {
       return res.status(400).json({
         error: 'Customer information required',
-        code: 'DATA-403'
+        code: ERROR_CODES.DATA_INVALID
       });
     }
 
@@ -193,14 +194,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!validateEmail(customer.email)) {
       return res.status(400).json({
         error: 'Invalid email address',
-        code: 'DATA-403'
+        code: ERROR_CODES.DATA_INVALID
       });
     }
 
     if (!validatePhone(customer.phone)) {
       return res.status(400).json({
         error: 'Invalid phone number',
-        code: 'DATA-403'
+        code: ERROR_CODES.DATA_INVALID
       });
     }
 
@@ -209,7 +210,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!itemsValidation.valid) {
       return res.status(400).json({
         error: itemsValidation.error,
-        code: 'DATA-403'
+        code: ERROR_CODES.DATA_INVALID
       });
     }
 
@@ -218,7 +219,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (calculatedTotal > MAX_ORDER_TOTAL) {
       return res.status(400).json({
         error: `Order total cannot exceed $${MAX_ORDER_TOTAL}`,
-        code: 'DATA-403'
+        code: ERROR_CODES.DATA_INVALID
       });
     }
 
@@ -260,7 +261,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!slotRow) {
       return res.status(400).json({
         error: 'Bake slot not found',
-        code: 'ORD-SLOT_CLOSED'
+        code: ERROR_CODES.ORD_SLOT_CLOSED
       });
     }
 
@@ -272,7 +273,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (currentOrders + orderQuantity > totalCapacity) {
       return res.status(400).json({
         error: 'Not enough capacity for this order',
-        code: 'ORD-106'
+        code: ERROR_CODES.ORD_CAPACITY
       });
     }
 
@@ -373,7 +374,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(500).json({
       error: 'Failed to submit order',
       details: error instanceof Error ? error.message : 'Unknown error',
-      code: 'ORD-001'
+      code: ERROR_CODES.ORD_GENERAL
     });
   }
 }

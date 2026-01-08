@@ -499,17 +499,31 @@ export function setupIpcHandlers(): void {
 
     const slots = db.prepare(query).all(...params) as Array<Record<string, unknown>>;
 
-    // For each slot, get its locations from the junction table
-    const getLocationsStmt = db.prepare(`
-      SELECT l.id, l.name
+    if (slots.length === 0) {
+      return [];
+    }
+
+    // Fetch all locations for all bake slots in one query (avoids N+1)
+    const slotIds = slots.map(s => s.id);
+    const placeholders = slotIds.map(() => '?').join(',');
+    const allLocations = db.prepare(`
+      SELECT bsl.bake_slot_id, l.id, l.name
       FROM bake_slot_locations bsl
       JOIN locations l ON bsl.location_id = l.id
-      WHERE bsl.bake_slot_id = ?
+      WHERE bsl.bake_slot_id IN (${placeholders})
       ORDER BY l.name
-    `);
+    `).all(...slotIds) as Array<{ bake_slot_id: string; id: string; name: string }>;
+
+    // Group locations by bake slot ID
+    const locationsBySlot = new Map<string, Array<{ id: string; name: string }>>();
+    for (const loc of allLocations) {
+      const existing = locationsBySlot.get(loc.bake_slot_id) || [];
+      existing.push({ id: loc.id, name: loc.name });
+      locationsBySlot.set(loc.bake_slot_id, existing);
+    }
 
     return slots.map(slot => {
-      const locations = getLocationsStmt.all(slot.id) as Array<{ id: string; name: string }>;
+      const locations = locationsBySlot.get(slot.id as string) || [];
       return {
         ...slot,
         locations,
@@ -1916,16 +1930,61 @@ export function setupIpcHandlers(): void {
   });
 
   // Audit Log
-  ipcMain.handle('audit:getLog', async (_event, filters?: { limit?: number; offset?: number }) => {
+  ipcMain.handle('audit:getLog', async (_event, filters?: {
+    limit?: number;
+    offset?: number;
+    startDate?: string;
+    endDate?: string;
+    action?: string;
+    userId?: string;
+  }) => {
     const db = getDb();
-    const limit = filters?.limit || 100;
+    const limit = Math.min(filters?.limit || 100, 500); // Cap at 500 for performance
     const offset = filters?.offset || 0;
 
-    return db.prepare(`
+    // Build WHERE clause for filtering
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+
+    if (filters?.startDate) {
+      conditions.push('created_at >= ?');
+      params.push(filters.startDate);
+    }
+    if (filters?.endDate) {
+      conditions.push('created_at <= ?');
+      params.push(filters.endDate);
+    }
+    if (filters?.action) {
+      conditions.push('action = ?');
+      params.push(filters.action);
+    }
+    if (filters?.userId) {
+      conditions.push('user_id = ?');
+      params.push(filters.userId);
+    }
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    // Get total count for pagination
+    const countResult = db.prepare(`SELECT COUNT(*) as total FROM audit_log ${whereClause}`).get(...params) as { total: number };
+
+    // Get paginated data
+    const data = db.prepare(`
       SELECT * FROM audit_log
+      ${whereClause}
       ORDER BY created_at DESC
       LIMIT ? OFFSET ?
-    `).all(limit, offset);
+    `).all(...params, limit, offset);
+
+    return {
+      data,
+      pagination: {
+        total: countResult.total,
+        limit,
+        offset,
+        hasMore: offset + data.length < countResult.total
+      }
+    };
   });
 
   // System
