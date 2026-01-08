@@ -129,7 +129,7 @@ function CustomersPage() {
 
       {/* Customer Detail Modal */}
       {selectedCustomer && (
-        <div className="modal-overlay" onClick={() => setSelectedCustomer(null)}>
+        <div className="modal-overlay">
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2 className="modal-title">

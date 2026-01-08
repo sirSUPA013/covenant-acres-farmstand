@@ -23,8 +23,54 @@ interface Ingredient {
   name: string;
   quantity: number;
   unit: string;
+  base_unit?: string; // The unit from the ingredient library (for cost calculation)
   cost_per_unit?: number;
   phase?: 'base' | 'fold' | 'lamination';
+}
+
+// Unit conversion factors to grams (for weight) or ml (for volume)
+const UNIT_TO_GRAMS: Record<string, number> = {
+  'g': 1,
+  'kg': 1000,
+  'oz': 28.3495,
+  'lbs': 453.592,
+};
+
+const UNIT_TO_ML: Record<string, number> = {
+  'ml': 1,
+  'tsp': 4.92892,
+  'tbsp': 14.7868,
+  'cup': 236.588,
+  'fl oz': 29.5735,
+};
+
+// Convert quantity from one unit to another
+function convertUnits(quantity: number, fromUnit: string, toUnit: string): number {
+  if (fromUnit === toUnit) return quantity;
+  
+  // Check if both are weight units
+  if (UNIT_TO_GRAMS[fromUnit] && UNIT_TO_GRAMS[toUnit]) {
+    const inGrams = quantity * UNIT_TO_GRAMS[fromUnit];
+    return inGrams / UNIT_TO_GRAMS[toUnit];
+  }
+  
+  // Check if both are volume units
+  if (UNIT_TO_ML[fromUnit] && UNIT_TO_ML[toUnit]) {
+    const inMl = quantity * UNIT_TO_ML[fromUnit];
+    return inMl / UNIT_TO_ML[toUnit];
+  }
+  
+  // "each" or incompatible units - no conversion possible
+  return quantity;
+}
+
+// Calculate ingredient cost with proper unit conversion
+function calculateIngredientCost(ing: Ingredient): number {
+  if (!ing.cost_per_unit || !ing.quantity) return 0;
+  
+  const baseUnit = ing.base_unit || ing.unit; // Fall back to recipe unit if no base_unit
+  const quantityInBaseUnit = convertUnits(ing.quantity, ing.unit, baseUnit);
+  return quantityInBaseUnit * ing.cost_per_unit;
 }
 
 // Step with ID for drag-and-drop
@@ -324,10 +370,37 @@ function RecipesPage() {
     if (!selectedRecipe) return;
 
     try {
+      // Consolidate duplicate ingredients (same ingredient_id, unit, and phase) before saving
+      const consolidatedIngredients: Ingredient[] = [];
+      const mergedNames: string[] = [];
+
+      for (const ing of editIngredients) {
+        if (!ing.ingredient_id || !ing.name) continue; // Skip empty rows
+
+        const existingIndex = consolidatedIngredients.findIndex(
+          (c) => c.ingredient_id === ing.ingredient_id && c.unit === ing.unit && c.phase === ing.phase
+        );
+
+        if (existingIndex !== -1) {
+          // Combine quantities
+          consolidatedIngredients[existingIndex].quantity += ing.quantity;
+          if (!mergedNames.includes(ing.name)) {
+            mergedNames.push(ing.name);
+          }
+        } else {
+          consolidatedIngredients.push({ ...ing });
+        }
+      }
+
+      // Notify user if any ingredients were merged
+      if (mergedNames.length > 0) {
+        alert(`Duplicate ingredients were combined: ${mergedNames.join(', ')}`);
+      }
+
       // Separate ingredients by phase
-      const baseIngredients = editIngredients.filter((i) => i.phase === 'base' || !i.phase);
-      const foldIngredients = editIngredients.filter((i) => i.phase === 'fold');
-      const laminationIngredients = editIngredients.filter((i) => i.phase === 'lamination');
+      const baseIngredients = consolidatedIngredients.filter((i) => i.phase === 'base' || !i.phase);
+      const foldIngredients = consolidatedIngredients.filter((i) => i.phase === 'fold');
+      const laminationIngredients = consolidatedIngredients.filter((i) => i.phase === 'lamination');
 
       // Auto-calculate times from step phases
       const prepTimeMinutes = calculatePreBakeTime(editSteps);
@@ -346,8 +419,18 @@ function RecipesPage() {
         bakeInstructions: '',
         notes: editNotes,
       });
+
+      // Reload recipes and refresh the selected recipe with updated data
+      const updatedRecipes = await window.api.getRecipes() as Recipe[];
+      setRecipes(updatedRecipes);
+
+      // Find and re-select the updated recipe to refresh the view
+      const updatedRecipe = updatedRecipes.find(r => r.id === selectedRecipe.id);
+      if (updatedRecipe) {
+        openRecipe(updatedRecipe);
+      }
+
       setEditMode(false);
-      loadRecipes();
     } catch (error) {
       console.error('Failed to save recipe:', error);
     }
@@ -367,6 +450,7 @@ function RecipesPage() {
       ingredient_id: libIngredient.id,
       name: libIngredient.name,
       unit: libIngredient.unit,
+      base_unit: libIngredient.unit, // Store the library's unit for cost calculation
       cost_per_unit: libIngredient.cost_per_unit,
     };
     setEditIngredients(updated);
@@ -500,7 +584,7 @@ function RecipesPage() {
   }
 
   function calculateTotalCost(ingredients: Ingredient[]): number {
-    return ingredients.reduce((sum, ing) => sum + (ing.quantity * (ing.cost_per_unit || 0)), 0);
+    return ingredients.reduce((sum, ing) => sum + calculateIngredientCost(ing), 0);
   }
 
   function parseIngredients(json: string): Ingredient[] {
@@ -563,7 +647,7 @@ function RecipesPage() {
 
       {/* Recipe Detail Modal */}
       {selectedRecipe && (
-        <div className="modal-overlay" onClick={() => { if (!showInlineForm) setSelectedRecipe(null); }}>
+        <div className="modal-overlay">
           <div className="modal modal-large" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2 className="modal-title">{selectedRecipe.flavor_name} Recipe</h2>
@@ -622,7 +706,7 @@ function RecipesPage() {
                               </td>
                               <td>
                                 {ing.cost_per_unit
-                                  ? `$${(ing.quantity * ing.cost_per_unit).toFixed(2)}`
+                                  ? `$${calculateIngredientCost(ing).toFixed(2)}`
                                   : '-'}
                               </td>
                             </tr>
@@ -653,7 +737,7 @@ function RecipesPage() {
                               </td>
                               <td>
                                 {ing.cost_per_unit
-                                  ? `$${(ing.quantity * ing.cost_per_unit).toFixed(2)}`
+                                  ? `$${calculateIngredientCost(ing).toFixed(2)}`
                                   : '-'}
                               </td>
                             </tr>
@@ -684,7 +768,7 @@ function RecipesPage() {
                               </td>
                               <td>
                                 {ing.cost_per_unit
-                                  ? `$${(ing.quantity * ing.cost_per_unit).toFixed(2)}`
+                                  ? `$${calculateIngredientCost(ing).toFixed(2)}`
                                   : '-'}
                               </td>
                             </tr>
@@ -787,10 +871,31 @@ function RecipesPage() {
                             updateIngredient(i, 'quantity', parseFloat(e.target.value) || 0)
                           }
                         />
-                        <div className="ingredient-unit">{ing.unit}</div>
+                        <select
+                          className="form-select ingredient-unit-select"
+                          value={ing.unit || 'g'}
+                          onChange={(e) => updateIngredient(i, 'unit', e.target.value)}
+                        >
+                          <optgroup label="Weight">
+                            <option value="g">g</option>
+                            <option value="oz">oz</option>
+                            <option value="lbs">lbs</option>
+                            <option value="kg">kg</option>
+                          </optgroup>
+                          <optgroup label="Volume">
+                            <option value="ml">ml</option>
+                            <option value="tsp">tsp</option>
+                            <option value="tbsp">tbsp</option>
+                            <option value="cup">cup</option>
+                            <option value="fl oz">fl oz</option>
+                          </optgroup>
+                          <optgroup label="Count">
+                            <option value="each">each</option>
+                          </optgroup>
+                        </select>
                         <div className="ingredient-cost">
                           {ing.cost_per_unit
-                            ? `$${(ing.quantity * ing.cost_per_unit).toFixed(2)}`
+                            ? `$${calculateIngredientCost(ing).toFixed(2)}`
                             : '-'}
                         </div>
                         <select

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 
 interface BakeSlot {
   id: string;
@@ -55,7 +55,18 @@ interface Ingredient {
 
 function ConfigPage() {
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState<'slots' | 'flavors' | 'locations' | 'costs' | 'ingredients'>('slots');
+  const location = useLocation();
+  
+  // Derive active tab from URL path
+  const getActiveTab = (): 'slots' | 'flavors' | 'locations' | 'costs' | 'ingredients' => {
+    const path = location.pathname;
+    if (path.includes('/flavors')) return 'flavors';
+    if (path.includes('/locations')) return 'locations';
+    if (path.includes('/costs')) return 'costs';
+    if (path.includes('/ingredients')) return 'ingredients';
+    return 'slots'; // default
+  };
+  const activeTab = getActiveTab();
   const [bakeSlots, setBakeSlots] = useState<BakeSlot[]>([]);
   const [flavors, setFlavors] = useState<Flavor[]>([]);
   const [locations, setLocations] = useState<Location[]>([]);
@@ -81,6 +92,8 @@ function ConfigPage() {
     vendor: '',
     category: 'base',
   });
+  const [ingredientSaving, setIngredientSaving] = useState(false);
+  const [ingredientSuccess, setIngredientSuccess] = useState<string | null>(null);
 
   // Location editing
   const [showLocationModal, setShowLocationModal] = useState(false);
@@ -196,37 +209,64 @@ function ConfigPage() {
   function closeIngredientModal() {
     setShowIngredientModal(false);
     setEditingIngredient(null);
+    setIngredientSuccess(null);
+    setIngredientSaving(false);
   }
 
   async function saveIngredient() {
-    if (!ingredientForm.name.trim() || ingredientForm.package_size <= 0) return;
+    // Validate required fields with user feedback
+    if (!ingredientForm.name.trim()) {
+      setIngredientSuccess('Please enter an ingredient name.');
+      return;
+    }
+    if (ingredientForm.package_size <= 0) {
+      setIngredientSuccess('Please enter a valid package size (greater than 0).');
+      return;
+    }
+    if (ingredientForm.package_price <= 0) {
+      setIngredientSuccess('Please enter a valid package price (greater than 0).');
+      return;
+    }
+
+    setIngredientSaving(true);
+    setIngredientSuccess(null);
 
     try {
+      const ingredientName = ingredientForm.name;
       if (editingIngredient) {
         await window.api.updateIngredient(editingIngredient.id, {
           name: ingredientForm.name,
           unit: ingredientForm.unit,
-          package_price: ingredientForm.package_price,
-          package_size: ingredientForm.package_size,
-          package_unit: ingredientForm.package_unit,
+          packagePrice: ingredientForm.package_price,
+          packageSize: ingredientForm.package_size,
+          packageUnit: ingredientForm.package_unit,
           vendor: ingredientForm.vendor,
           category: ingredientForm.category,
         });
+        setIngredientSuccess(`"$\{ingredientName}" has been updated.`);
       } else {
         await window.api.createIngredient({
           name: ingredientForm.name,
           unit: ingredientForm.unit,
-          package_price: ingredientForm.package_price,
-          package_size: ingredientForm.package_size,
-          package_unit: ingredientForm.package_unit,
+          packagePrice: ingredientForm.package_price,
+          packageSize: ingredientForm.package_size,
+          packageUnit: ingredientForm.package_unit,
           vendor: ingredientForm.vendor,
           category: ingredientForm.category,
         });
+        setIngredientSuccess(`"$\{ingredientName}" has been added to your ingredient library.`);
       }
-      closeIngredientModal();
-      loadAll();
+      // Auto-close after showing success briefly
+      setTimeout(() => {
+        closeIngredientModal();
+        setIngredientSuccess(null);
+        loadAll();
+      }, 1500);
     } catch (error) {
       console.error('Failed to save ingredient:', error);
+      setIngredientSuccess(`Failed to save: $\{error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setIngredientSaving(false);
     }
   }
 
@@ -552,46 +592,7 @@ function ConfigPage() {
 
   return (
     <div className="config-page">
-      <div className="page-header">
-        <h1 className="page-title">Configuration</h1>
-      </div>
 
-      <div className="tabs" style={{ marginBottom: '20px' }}>
-        <button
-          className={`btn ${activeTab === 'slots' ? 'btn-primary' : 'btn-secondary'}`}
-          onClick={() => setActiveTab('slots')}
-          style={{ marginRight: '8px' }}
-        >
-          Pick Up Days
-        </button>
-        <button
-          className={`btn ${activeTab === 'flavors' ? 'btn-primary' : 'btn-secondary'}`}
-          onClick={() => setActiveTab('flavors')}
-          style={{ marginRight: '8px' }}
-        >
-          Flavors
-        </button>
-        <button
-          className={`btn ${activeTab === 'locations' ? 'btn-primary' : 'btn-secondary'}`}
-          onClick={() => setActiveTab('locations')}
-          style={{ marginRight: '8px' }}
-        >
-          Locations
-        </button>
-        <button
-          className={`btn ${activeTab === 'costs' ? 'btn-primary' : 'btn-secondary'}`}
-          onClick={() => setActiveTab('costs')}
-          style={{ marginRight: '8px' }}
-        >
-          Costs
-        </button>
-        <button
-          className={`btn ${activeTab === 'ingredients' ? 'btn-primary' : 'btn-secondary'}`}
-          onClick={() => setActiveTab('ingredients')}
-        >
-          Ingredients
-        </button>
-      </div>
 
       {loading ? (
         <div className="loading">Loading...</div>
@@ -1103,7 +1104,7 @@ function ConfigPage() {
 
       {/* New Pick Up Day Modal */}
       {showNewSlot && (
-        <div className="modal-overlay" onClick={() => setShowNewSlot(false)}>
+        <div className="modal-overlay">
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2 className="modal-title">Add Pick Up Day</h2>
@@ -1185,7 +1186,7 @@ function ConfigPage() {
 
       {/* Flavor Modal */}
       {showFlavorModal && (
-        <div className="modal-overlay" onClick={closeFlavorModal}>
+        <div className="modal-overlay">
           <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '500px' }}>
             <div className="modal-header">
               <h2 className="modal-title">{editingFlavor ? 'Edit Flavor' : 'Add Flavor'}</h2>
@@ -1309,7 +1310,7 @@ function ConfigPage() {
 
       {/* Ingredient Modal */}
       {showIngredientModal && (
-        <div className="modal-overlay" onClick={closeIngredientModal}>
+        <div className="modal-overlay">
           <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '500px' }}>
             <div className="modal-header">
               <h2 className="modal-title">{editingIngredient ? 'Edit Ingredient' : 'Add Ingredient'}</h2>
@@ -1380,19 +1381,6 @@ function ConfigPage() {
                   </div>
 
                   <div className="form-group">
-                    <label className="form-label">Package Label</label>
-                    <input
-                      type="text"
-                      className="form-input"
-                      value={ingredientForm.package_unit}
-                      onChange={(e) => setIngredientForm({ ...ingredientForm, package_unit: e.target.value })}
-                      placeholder="e.g., 20lb"
-                    />
-                  </div>
-                </div>
-
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                  <div className="form-group">
                     <label className="form-label">Package Size *</label>
                     <input
                       type="number"
@@ -1404,20 +1392,33 @@ function ConfigPage() {
                       step="0.01"
                     />
                   </div>
+                </div>
 
-                  <div className="form-group">
-                    <label className="form-label">Unit</label>
-                    <select
-                      className="form-select"
-                      value={ingredientForm.unit}
-                      onChange={(e) => setIngredientForm({ ...ingredientForm, unit: e.target.value })}
-                    >
-                      <option value="g">grams (g)</option>
-                      <option value="ml">milliliters (ml)</option>
-                      <option value="tsp">teaspoons (tsp)</option>
+                <div className="form-group">
+                  <label className="form-label">Unit</label>
+                  <select
+                    className="form-select"
+                    value={ingredientForm.unit}
+                    onChange={(e) => setIngredientForm({ ...ingredientForm, unit: e.target.value })}
+                    style={{ maxWidth: '200px' }}
+                  >
+                    <optgroup label="Weight">
+                      <option value="g">g (grams)</option>
+                      <option value="oz">oz (ounces)</option>
+                      <option value="lbs">lbs (pounds)</option>
+                      <option value="kg">kg (kilograms)</option>
+                    </optgroup>
+                    <optgroup label="Volume">
+                      <option value="ml">ml (milliliters)</option>
+                      <option value="tsp">tsp (teaspoon)</option>
+                      <option value="tbsp">tbsp (tablespoon)</option>
+                      <option value="cup">cup</option>
+                      <option value="fl oz">fl oz (fluid ounce)</option>
+                    </optgroup>
+                    <optgroup label="Count">
                       <option value="each">each</option>
-                    </select>
-                  </div>
+                    </optgroup>
+                  </select>
                 </div>
 
                 {ingredientForm.package_size > 0 && ingredientForm.package_price > 0 && (
@@ -1432,16 +1433,29 @@ function ConfigPage() {
                 )}
               </div>
             </div>
+            {ingredientSuccess && (
+              <div style={{
+                padding: '12px 16px',
+                margin: '0 16px 16px',
+                borderRadius: '6px',
+                backgroundColor: ingredientSuccess.includes('Failed') || ingredientSuccess.includes('Please') ? '#ffebee' : '#e8f5e9',
+                color: ingredientSuccess.includes('Failed') || ingredientSuccess.includes('Please') ? '#c62828' : '#2e7d32',
+                fontWeight: '500',
+                textAlign: 'center',
+              }}>
+                {ingredientSuccess}
+              </div>
+            )}
             <div className="modal-footer">
-              <button className="btn btn-secondary" onClick={closeIngredientModal}>
+              <button className="btn btn-secondary" onClick={closeIngredientModal} disabled={ingredientSaving}>
                 Cancel
               </button>
               <button
                 className="btn btn-primary"
                 onClick={saveIngredient}
-                disabled={!ingredientForm.name.trim() || ingredientForm.package_size <= 0}
+                disabled={ingredientSaving}
               >
-                {editingIngredient ? 'Save Changes' : 'Add Ingredient'}
+                {ingredientSaving ? 'Saving...' : (editingIngredient ? 'Save Changes' : 'Add Ingredient')}
               </button>
             </div>
           </div>
@@ -1450,7 +1464,7 @@ function ConfigPage() {
 
       {/* Location Modal */}
       {showLocationModal && (
-        <div className="modal-overlay" onClick={closeLocationModal}>
+        <div className="modal-overlay">
           <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '450px' }}>
             <div className="modal-header">
               <h2 className="modal-title">{editingLocation ? 'Edit Location' : 'Add Location'}</h2>

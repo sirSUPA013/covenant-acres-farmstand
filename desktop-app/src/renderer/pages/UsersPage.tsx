@@ -301,7 +301,7 @@ function UsersPage() {
 
       {/* Add/Edit Modal */}
       {(showAddModal || editingUser) && (
-        <div className="modal-overlay" onClick={closeModal}>
+        <div className="modal-overlay">
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2>{showAddModal ? 'Add User' : 'Edit User'}</h2>

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Routes, Route, NavLink, useLocation } from 'react-router-dom';
+import { Routes, Route, NavLink, Navigate, useLocation } from 'react-router-dom';
 
 // Components
 import LockScreen from './components/LockScreen';
@@ -80,6 +80,15 @@ function App() {
     setIsLocked(true);
   }
 
+  const [configExpanded, setConfigExpanded] = useState(false);
+
+  // Update configExpanded when location changes
+  useEffect(() => {
+    if (location.pathname.startsWith('/config')) {
+      setConfigExpanded(true);
+    }
+  }, [location.pathname]);
+
   if (isLocked) {
     return <LockScreen onUnlock={handleUnlock} />;
   }
@@ -89,7 +98,18 @@ function App() {
     { path: '/orders', label: 'Orders', icon: '📋' },
     { path: '/customers', label: 'Customers', icon: '👥' },
     { path: '/production', label: 'Production', icon: '🍞' },
-    { path: '/config', label: 'Configure', icon: '⚙️' },
+    { 
+      path: '/config', 
+      label: 'Configure', 
+      icon: '⚙️',
+      subItems: [
+        { path: '/config/slots', label: 'Pick Up Days' },
+        { path: '/config/flavors', label: 'Flavors' },
+        { path: '/config/locations', label: 'Locations' },
+        { path: '/config/costs', label: 'Costs' },
+        { path: '/config/ingredients', label: 'Ingredients' },
+      ]
+    },
     { path: '/recipes', label: 'Recipes', icon: '📖' },
     { path: '/prep', label: 'Prep Sheet', icon: '📝' },
     { path: '/users', label: 'Users', icon: '👤', requiresOwner: true },
@@ -114,14 +134,40 @@ function App() {
 
         <nav className="sidebar-nav">
           {visibleNavItems.map((item) => (
-            <NavLink
-              key={item.path}
-              to={item.path}
-              className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
-            >
-              <span className="nav-icon">{item.icon}</span>
-              <span className="nav-label">{item.label}</span>
-            </NavLink>
+            item.subItems ? (
+              <div key={item.path} className="nav-group">
+                <button
+                  className={`nav-item nav-parent ${location.pathname.startsWith(item.path) ? 'active' : ''}`}
+                  onClick={() => setConfigExpanded(!configExpanded)}
+                >
+                  <span className="nav-icon">{item.icon}</span>
+                  <span className="nav-label">{item.label}</span>
+                  <span className={`nav-arrow ${configExpanded ? 'expanded' : ''}`}>▸</span>
+                </button>
+                {configExpanded && (
+                  <div className="nav-subitems">
+                    {item.subItems.map((sub) => (
+                      <NavLink
+                        key={sub.path}
+                        to={sub.path}
+                        className={({ isActive }) => `nav-subitem ${isActive ? 'active' : ''}`}
+                      >
+                        {sub.label}
+                      </NavLink>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <NavLink
+                key={item.path}
+                to={item.path}
+                className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+              >
+                <span className="nav-icon">{item.icon}</span>
+                <span className="nav-label">{item.label}</span>
+              </NavLink>
+            )
           ))}
         </nav>
 
@@ -170,7 +216,8 @@ function App() {
           <Route path="/" element={<AnalyticsPage />} />
           <Route path="/orders" element={<OrdersPage />} />
           <Route path="/customers" element={<CustomersPage />} />
-          <Route path="/config" element={<ConfigPage />} />
+          <Route path="/config" element={<Navigate to="/config/slots" replace />} />
+          <Route path="/config/*" element={<ConfigPage />} />
           <Route path="/recipes" element={<RecipesPage />} />
           <Route path="/prep" element={<PrepSheetPage />} />
           <Route path="/production" element={<ProductionPage />} />

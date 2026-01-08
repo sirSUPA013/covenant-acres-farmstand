@@ -631,7 +631,7 @@ function OrdersPage() {
 
       {/* Order Detail Modal */}
       {selectedOrder && (
-        <div className="modal-overlay" onClick={() => { if (!isEditing) { setSelectedOrder(null); cancelPaymentChange(); } }}>
+        <div className="modal-overlay">
           <div className="modal modal-large" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2 className="modal-title">
