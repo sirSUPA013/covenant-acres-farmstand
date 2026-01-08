@@ -741,17 +741,47 @@ function PrepSheetPage() {
           }
           .main-content {
             padding: 0 !important;
+            overflow: visible !important;
+            height: auto !important;
+          }
+          .prep-sheet-page {
+            overflow: visible !important;
+            height: auto !important;
+          }
+          .prep-sheet-content {
+            overflow: visible !important;
+            height: auto !important;
           }
           .card {
             box-shadow: none;
             border: 1px solid #ddd;
-            page-break-inside: avoid;
+            page-break-inside: auto;
+            break-inside: auto;
           }
           .page-break-before {
-            page-break-before: auto;
+            page-break-before: always;
+            break-before: page;
+          }
+          table {
+            page-break-inside: auto;
+          }
+          tr {
+            page-break-inside: avoid;
+            break-inside: avoid;
+          }
+          thead {
+            display: table-header-group;
+          }
+          tfoot {
+            display: table-footer-group;
           }
           body {
             background: white;
+            overflow: visible !important;
+            height: auto !important;
+          }
+          @page {
+            margin: 0.5in;
           }
         }
       `}</style>

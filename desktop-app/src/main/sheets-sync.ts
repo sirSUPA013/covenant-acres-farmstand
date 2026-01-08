@@ -565,6 +565,9 @@ export async function syncAll(): Promise<void> {
     // Then pull new orders/customers FROM Sheets (from order form)
     await pullFromSheets();
 
+    // Notify renderer that new orders may have arrived
+    notifyOrdersUpdated();
+
     syncStatus.lastSync = new Date().toISOString();
     syncStatus.pendingChanges = 0;
 
@@ -581,9 +584,10 @@ export async function syncAll(): Promise<void> {
 async function pullFromSheets(): Promise<void> {
   // Only pull tables that originate from the order form
   // BakeSlots, Flavors, Locations are created in desktop app - they get PUSHED, not pulled
+  // IMPORTANT: Customers must sync BEFORE Orders (orders reference customers via foreign key)
   const tables = [
-    { sheet: 'Orders', table: 'orders' },
     { sheet: 'Customers', table: 'customers' },
+    { sheet: 'Orders', table: 'orders' },
   ];
 
   for (const { sheet, table } of tables) {
@@ -623,6 +627,7 @@ function updateLocalTable(table: string, headers: string[], rows: string[][]): v
     // Orders
     customer_id: 'customer_id',
     bake_slot_id: 'bake_slot_id',
+    pickup_location_id: 'pickup_location_id',
     items: 'items',
     total_amount: 'total_amount',
     status: 'status',
@@ -630,6 +635,9 @@ function updateLocalTable(table: string, headers: string[], rows: string[][]): v
     payment_status: 'payment_status',
     customer_notes: 'customer_notes',
     admin_notes: 'admin_notes',
+    credit_applied: 'credit_applied',
+    adjustment_reason: 'adjustment_reason',
+    cutoff_at: 'cutoff_at',
     created_at: 'created_at',
     updated_at: 'updated_at',
     // Customers
@@ -639,9 +647,13 @@ function updateLocalTable(table: string, headers: string[], rows: string[][]): v
     phone: 'phone',
     notification_pref: 'notification_pref',
     sms_opt_in: 'sms_opt_in',
+    sms_opt_in_date: 'sms_opt_in_date',
+    has_account: 'has_account',
     credit_balance: 'credit_balance',
     total_orders: 'total_orders',
     total_spent: 'total_spent',
+    first_order_date: 'first_order_date',
+    last_order_date: 'last_order_date',
     // BakeSlots
     date: 'date',
     location_id: 'location_id',
@@ -649,6 +661,8 @@ function updateLocalTable(table: string, headers: string[], rows: string[][]): v
     current_orders: 'current_orders',
     cutoff_time: 'cutoff_time',
     is_open: 'is_open',
+    manually_closed_by: 'manually_closed_by',
+    manually_closed_at: 'manually_closed_at',
     // Flavors
     name: 'name',
     description: 'description',
@@ -656,6 +670,8 @@ function updateLocalTable(table: string, headers: string[], rows: string[][]): v
     is_active: 'is_active',
     season: 'season',
     sort_order: 'sort_order',
+    image_url: 'image_url',
+    estimated_cost: 'estimated_cost',
     // Locations
     address: 'address',
   };
@@ -690,6 +706,22 @@ function updateLocalTable(table: string, headers: string[], rows: string[][]): v
       values.push(now);
     }
 
+    // Ensure required timestamp fields have values (for legacy data missing these)
+    const requiredTimestamps = ['created_at', 'updated_at'];
+    for (const tsField of requiredTimestamps) {
+      if (dbColumns.has(tsField)) {
+        const colIndex = columns.indexOf(tsField);
+        if (colIndex === -1) {
+          // Field not in data, add it with current timestamp
+          columns.push(tsField);
+          values.push(now);
+        } else if (!values[colIndex]) {
+          // Field exists but is empty, set to current timestamp
+          values[colIndex] = now;
+        }
+      }
+    }
+
     if (columns.length === 0) continue;
 
     try {
@@ -701,7 +733,12 @@ function updateLocalTable(table: string, headers: string[], rows: string[][]): v
          ON CONFLICT(id) DO UPDATE SET ${updatePairs}`
       ).run(...values);
     } catch (error) {
-      log('debug', `Could not upsert into ${table}`, { error, id });
+      // Log at warn level so sync failures are visible
+      log('warn', `Failed to sync ${table} record`, {
+        id,
+        error: error instanceof Error ? error.message : String(error),
+        columns: columns.join(', ')
+      });
     }
   }
 }
@@ -710,6 +747,13 @@ function notifyRenderer(): void {
   const windows = BrowserWindow.getAllWindows();
   windows.forEach((win) => {
     win.webContents.send('sync:update', getSyncStatus());
+  });
+}
+
+function notifyOrdersUpdated(): void {
+  const windows = BrowserWindow.getAllWindows();
+  windows.forEach((win) => {
+    win.webContents.send('orders:new', {});
   });
 }
 

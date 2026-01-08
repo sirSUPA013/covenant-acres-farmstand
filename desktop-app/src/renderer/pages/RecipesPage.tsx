@@ -420,20 +420,38 @@ function RecipesPage() {
   }
 
   async function saveNewIngredient() {
-    if (!newIngredient.name || !newIngredient.package_size) {
+    if (!newIngredient.name.trim()) {
+      alert('Please enter an ingredient name.');
+      return;
+    }
+    if (!newIngredient.package_size || newIngredient.package_size <= 0) {
+      alert('Please enter a valid package size greater than 0.');
+      return;
+    }
+    if (newIngredient.package_price <= 0) {
+      alert('Please enter a valid package price greater than 0.');
       return;
     }
     try {
+      console.log('Creating ingredient with data:', {
+        name: newIngredient.name,
+        unit: newIngredient.unit,
+        packagePrice: newIngredient.package_price,
+        packageSize: newIngredient.package_size,
+        packageUnit: newIngredient.package_unit,
+        vendor: newIngredient.vendor,
+        category: newIngredient.category,
+      });
       const result = await window.api.createIngredient({
         name: newIngredient.name,
         unit: newIngredient.unit,
-        package_price: newIngredient.package_price,
-        package_size: newIngredient.package_size,
-        package_unit: newIngredient.package_unit,
+        packagePrice: newIngredient.package_price,
+        packageSize: newIngredient.package_size,
+        packageUnit: newIngredient.package_unit,
         vendor: newIngredient.vendor,
         category: newIngredient.category,
-        cost_per_unit: newIngredient.package_price / newIngredient.package_size,
       });
+      console.log('Ingredient created:', result);
       await loadLibraryIngredients();
       setShowInlineForm(false);
       setNewIngredient({
@@ -445,8 +463,10 @@ function RecipesPage() {
         vendor: '',
         category: 'base',
       });
+      alert('Ingredient saved successfully!');
     } catch (error) {
       console.error('Failed to create ingredient:', error);
+      alert(`Failed to save ingredient: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
@@ -543,7 +563,7 @@ function RecipesPage() {
 
       {/* Recipe Detail Modal */}
       {selectedRecipe && (
-        <div className="modal-overlay" onClick={() => setSelectedRecipe(null)}>
+        <div className="modal-overlay" onClick={() => { if (!showInlineForm) setSelectedRecipe(null); }}>
           <div className="modal modal-large" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2 className="modal-title">{selectedRecipe.flavor_name} Recipe</h2>
@@ -827,11 +847,22 @@ function RecipesPage() {
                                 setNewIngredient({ ...newIngredient, unit: e.target.value })
                               }
                             >
-                              <option value="g">g</option>
-                              <option value="ml">ml</option>
-                              <option value="tsp">tsp</option>
-                              <option value="tbsp">tbsp</option>
-                              <option value="each">each</option>
+                              <optgroup label="Weight">
+                                <option value="g">g (grams)</option>
+                                <option value="oz">oz (ounces)</option>
+                                <option value="lbs">lbs (pounds)</option>
+                                <option value="kg">kg (kilograms)</option>
+                              </optgroup>
+                              <optgroup label="Volume">
+                                <option value="ml">ml (milliliters)</option>
+                                <option value="tsp">tsp (teaspoon)</option>
+                                <option value="tbsp">tbsp (tablespoon)</option>
+                                <option value="cup">cup</option>
+                                <option value="fl oz">fl oz (fluid ounce)</option>
+                              </optgroup>
+                              <optgroup label="Count">
+                                <option value="each">each</option>
+                              </optgroup>
                             </select>
                           </div>
                           <div className="form-group">

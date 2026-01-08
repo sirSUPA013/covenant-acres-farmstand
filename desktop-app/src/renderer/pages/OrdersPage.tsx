@@ -44,6 +44,9 @@ interface BakeSlot {
   location_name: string;
 }
 
+type SortColumn = 'id' | 'customer' | 'created_at' | 'pickup' | 'total' | 'status' | 'payment';
+type SortDirection = 'asc' | 'desc';
+
 function OrdersPage() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
@@ -54,6 +57,8 @@ function OrdersPage() {
   const [bulkPayment, setBulkPayment] = useState('');
   const [bulkPaymentMethod, setBulkPaymentMethod] = useState('');
   const [requirePaymentMethod, setRequirePaymentMethod] = useState(false);
+  const [sortColumn, setSortColumn] = useState<SortColumn>('created_at');
+  const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
 
   // Edit mode state
   const [isEditing, setIsEditing] = useState(false);
@@ -395,6 +400,48 @@ function OrdersPage() {
     { value: 'no_show', label: 'No Show' },
   ];
 
+  function handleSort(column: SortColumn) {
+    if (sortColumn === column) {
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortColumn(column);
+      setSortDirection('asc');
+    }
+  }
+
+  function getSortIndicator(column: SortColumn) {
+    if (sortColumn !== column) return '';
+    return sortDirection === 'asc' ? ' ▲' : ' ▼';
+  }
+
+  const sortedOrders = [...orders].sort((a, b) => {
+    let comparison = 0;
+    switch (sortColumn) {
+      case 'id':
+        comparison = a.id.localeCompare(b.id);
+        break;
+      case 'customer':
+        comparison = `${a.first_name} ${a.last_name}`.localeCompare(`${b.first_name} ${b.last_name}`);
+        break;
+      case 'created_at':
+        comparison = (a.created_at || '').localeCompare(b.created_at || '');
+        break;
+      case 'pickup':
+        comparison = (a.bake_date || '').localeCompare(b.bake_date || '');
+        break;
+      case 'total':
+        comparison = a.total_amount - b.total_amount;
+        break;
+      case 'status':
+        comparison = a.status.localeCompare(b.status);
+        break;
+      case 'payment':
+        comparison = a.payment_status.localeCompare(b.payment_status);
+        break;
+    }
+    return sortDirection === 'asc' ? comparison : -comparison;
+  });
+
   return (
     <div className="orders-page">
       <div className="page-header">
@@ -506,20 +553,39 @@ function OrdersPage() {
                     onChange={toggleSelectAll}
                   />
                 </th>
-                <th>Order #</th>
-                <th>Customer</th>
-                <th>Pickup</th>
+                <th onClick={() => handleSort('id')} style={{ cursor: 'pointer' }}>
+                  Order #{getSortIndicator('id')}
+                </th>
+                <th onClick={() => handleSort('customer')} style={{ cursor: 'pointer' }}>
+                  Customer{getSortIndicator('customer')}
+                </th>
+                <th onClick={() => handleSort('created_at')} style={{ cursor: 'pointer' }}>
+                  Order Date{getSortIndicator('created_at')}
+                </th>
+                <th onClick={() => handleSort('pickup')} style={{ cursor: 'pointer' }}>
+                  Pickup{getSortIndicator('pickup')}
+                </th>
                 <th>Items</th>
-                <th>Total</th>
-                <th>Status</th>
-                <th>Payment</th>
-                <th>Actions</th>
+                <th onClick={() => handleSort('total')} style={{ cursor: 'pointer' }}>
+                  Total{getSortIndicator('total')}
+                </th>
+                <th onClick={() => handleSort('status')} style={{ cursor: 'pointer' }}>
+                  Status{getSortIndicator('status')}
+                </th>
+                <th onClick={() => handleSort('payment')} style={{ cursor: 'pointer' }}>
+                  Payment{getSortIndicator('payment')}
+                </th>
               </tr>
             </thead>
             <tbody>
-              {orders.map((order) => (
-                <tr key={order.id} className={selectedIds.has(order.id) ? 'selected-row' : ''}>
-                  <td>
+              {sortedOrders.map((order) => (
+                <tr
+                  key={order.id}
+                  className={selectedIds.has(order.id) ? 'selected-row' : ''}
+                  onClick={() => setSelectedOrder(order)}
+                  style={{ cursor: 'pointer' }}
+                >
+                  <td onClick={(e) => e.stopPropagation()}>
                     <input
                       type="checkbox"
                       checked={selectedIds.has(order.id)}
@@ -532,6 +598,7 @@ function OrdersPage() {
                     <br />
                     <small style={{ color: '#666' }}>{order.email}</small>
                   </td>
+                  <td>{order.created_at ? formatDate(order.created_at) : '—'}</td>
                   <td>
                     {formatDate(order.bake_date)}
                     <br />
@@ -554,14 +621,6 @@ function OrdersPage() {
                     <span className={`status-badge status-${order.payment_status}`}>
                       {order.payment_status}
                     </span>
-                  </td>
-                  <td>
-                    <button
-                      className="btn btn-small btn-secondary"
-                      onClick={() => setSelectedOrder(order)}
-                    >
-                      View
-                    </button>
                   </td>
                 </tr>
               ))}

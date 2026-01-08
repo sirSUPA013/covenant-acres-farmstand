@@ -337,6 +337,8 @@ function ConfigPage() {
       setShowNewSlot(false);
       setNewSlot({ date: '', locationIds: [], totalCapacity: 24, cutoffTime: '' });
       loadAll();
+      // Trigger immediate sync so customer order form can see the new slot
+      window.api.triggerSync().catch((err) => console.error('Sync failed:', err));
     } catch (error) {
       console.error('Failed to create bake slot:', error);
     }
@@ -358,6 +360,8 @@ function ConfigPage() {
     try {
       await window.api.updateBakeSlot(slotId, { is_open: isOpen ? 1 : 0 });
       loadAll();
+      // Trigger immediate sync so customer order form reflects the change
+      window.api.triggerSync().catch((err) => console.error('Sync failed:', err));
     } catch (error) {
       console.error('Failed to update slot:', error);
     }
@@ -367,6 +371,8 @@ function ConfigPage() {
     try {
       await window.api.updateFlavor(flavorId, { isActive });
       loadAll();
+      // Trigger immediate sync so customer order form reflects the change
+      window.api.triggerSync().catch((err) => console.error('Sync failed:', err));
     } catch (error) {
       console.error('Failed to update flavor:', error);
     }
@@ -556,7 +562,7 @@ function ConfigPage() {
           onClick={() => setActiveTab('slots')}
           style={{ marginRight: '8px' }}
         >
-          Bake Slots
+          Pick Up Days
         </button>
         <button
           className={`btn ${activeTab === 'flavors' ? 'btn-primary' : 'btn-secondary'}`}
@@ -591,11 +597,11 @@ function ConfigPage() {
         <div className="loading">Loading...</div>
       ) : (
         <>
-          {/* Bake Slots Tab */}
+          {/* Pick Up Days Tab */}
           {activeTab === 'slots' && (
             <div className="card">
               <div className="card-header">
-                <h2 className="card-title">Bake Slots</h2>
+                <h2 className="card-title">Pick Up Days</h2>
                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                   {/* View Toggle */}
                   <div className="view-toggle" style={{ display: 'flex', border: '1px solid #ddd', borderRadius: '4px', overflow: 'hidden' }}>
@@ -615,7 +621,7 @@ function ConfigPage() {
                     </button>
                   </div>
                   <button className="btn btn-primary" onClick={() => setShowNewSlot(true)}>
-                    + Add Bake Slot
+                    + Add Pick Up Day
                   </button>
                 </div>
               </div>
@@ -625,7 +631,7 @@ function ConfigPage() {
                 <>
                   {bakeSlots.length === 0 ? (
                     <div className="empty-state">
-                      <p>No bake slots configured. Add one to start taking orders!</p>
+                      <p>No pick up days configured. Add one to start taking orders!</p>
                     </div>
                   ) : (
                     <table className="data-table">
@@ -753,7 +759,7 @@ function ConfigPage() {
                   </div>
 
                   <p style={{ marginTop: '12px', color: '#666', fontSize: '0.85rem' }}>
-                    Click on a future date to add a new bake slot
+                    Click on a future date to add a new pick up day
                   </p>
                 </div>
               )}
@@ -1095,12 +1101,12 @@ function ConfigPage() {
         </>
       )}
 
-      {/* New Bake Slot Modal */}
+      {/* New Pick Up Day Modal */}
       {showNewSlot && (
         <div className="modal-overlay" onClick={() => setShowNewSlot(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h2 className="modal-title">Add Bake Slot</h2>
+              <h2 className="modal-title">Add Pick Up Day</h2>
               <button className="modal-close" onClick={() => setShowNewSlot(false)}>
                 ×
               </button>

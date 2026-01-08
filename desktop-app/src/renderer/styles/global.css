@@ -1284,3 +1284,78 @@ body {
   border-color: var(--error);
   color: var(--error);
 }
+
+/* ============================================
+   Global Print Styles
+   ============================================ */
+
+@media print {
+  /* Override fixed heights and overflow */
+  html, body, #root {
+    height: auto !important;
+    overflow: visible !important;
+    background: white !important;
+  }
+
+  .app {
+    height: auto !important;
+    overflow: visible !important;
+    display: block !important;
+  }
+
+  .sidebar {
+    display: none !important;
+  }
+
+  .main-content {
+    overflow: visible !important;
+    height: auto !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  /* Hide common non-print elements */
+  .no-print,
+  .page-header .btn,
+  .filters,
+  .bulk-action-bar {
+    display: none !important;
+  }
+
+  /* Cards should not be clipped */
+  .card {
+    box-shadow: none !important;
+    border: 1px solid #ddd !important;
+    page-break-inside: auto;
+    break-inside: auto;
+  }
+
+  /* Tables */
+  table {
+    page-break-inside: auto;
+  }
+
+  tr {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  thead {
+    display: table-header-group;
+  }
+
+  tfoot {
+    display: table-footer-group;
+  }
+
+  /* Ensure long content flows to multiple pages */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  @page {
+    margin: 0.5in;
+    size: auto;
+  }
+}

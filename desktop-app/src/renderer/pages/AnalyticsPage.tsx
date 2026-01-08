@@ -501,13 +501,13 @@ function AnalyticsPage() {
               )}
             </div>
 
-            {/* Profit by Bake Slot */}
+            {/* Profit by Pick Up Day */}
             <div className="card">
               <div className="card-header">
-                <h2 className="card-title">Profit by Bake Day</h2>
+                <h2 className="card-title">Profit by Pick Up Day</h2>
               </div>
               {bakeSlotProfits.length === 0 ? (
-                <p className="text-gray" style={{ padding: '16px' }}>No bake slot data for this period</p>
+                <p className="text-gray" style={{ padding: '16px' }}>No pick up day data for this period</p>
               ) : (
                 <table className="data-table">
                   <thead>

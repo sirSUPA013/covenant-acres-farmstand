@@ -267,9 +267,10 @@ export const sheetsApi = {
       return {
         enabled: true,
         options: [
-          { type: 'venmo', label: 'Venmo', value: '@CovenantAcres', link: 'https://venmo.com/CovenantAcres' },
-          { type: 'cashapp', label: 'Cash App', value: '$CovenantAcres', link: 'https://cash.app/$CovenantAcres' },
-          { type: 'zelle', label: 'Zelle', value: 'pay@covenantacresin.com' },
+          { type: 'venmo', label: 'Venmo', value: '@Shane-Yandow', link: 'https://venmo.com/Shane-Yandow' },
+          { type: 'cashapp', label: 'Cash App', value: '$syandow3', link: 'https://cash.app/$syandow3' },
+          { type: 'paypal', label: 'PayPal', value: 'paypal.me/@syandow3', link: 'https://paypal.me/syandow3' },
+          { type: 'zelle', label: 'Zelle', value: '(770)696-3492' },
         ],
       };
     }

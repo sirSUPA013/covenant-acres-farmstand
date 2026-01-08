@@ -446,7 +446,7 @@ function ProductionPage() {
                         checked={formLinkType === 'slot'}
                         onChange={() => setFormLinkType('slot')}
                       />
-                      Bake Slot
+                      Pick Up Day
                     </label>
                     <label className="radio-label">
                       <input
@@ -459,17 +459,17 @@ function ProductionPage() {
                   </div>
                 </div>
 
-                {/* Bake Slot or Date */}
+                {/* Pick Up Day or Date */}
                 {formLinkType === 'slot' ? (
                   <div className="form-group">
-                    <label className="form-label">Bake Slot</label>
+                    <label className="form-label">Pick Up Day</label>
                     <select
                       className="form-select"
                       value={formBakeSlotId}
                       onChange={(e) => setFormBakeSlotId(e.target.value)}
                       required
                     >
-                      <option value="">Select a bake slot...</option>
+                      <option value="">Select a pick up day...</option>
                       {bakeSlots
                         .filter((slot) => slot.date <= new Date().toISOString().split('T')[0])
                         .map((slot) => (
@@ -478,7 +478,7 @@ function ProductionPage() {
                           </option>
                         ))}
                     </select>
-                    <p className="form-hint">Only past and today's bake slots are available.</p>
+                    <p className="form-hint">Only past and today's pick up days are available.</p>
                   </div>
                 ) : (
                   <div className="form-group">
