@@ -2,6 +2,8 @@
 
 This document describes the error codes returned by the order form API endpoints.
 
+**Implementation:** See `lib/_errors.ts` for error code constants.
+
 ## Error Code Format
 
 Error codes follow the pattern: `PREFIX-NUMBER` or `PREFIX-DESCRIPTION`

@@ -4,8 +4,8 @@
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { readSheet, appendRow, updateRow } from './lib/sheets';
-import { ERROR_CODES, createErrorResponse } from './lib/errors';
+import { readSheet, appendRow, updateRow } from './lib/_sheets';
+import { ERROR_CODES } from './lib/_errors';
 
 // ============ Data Types ============
 
