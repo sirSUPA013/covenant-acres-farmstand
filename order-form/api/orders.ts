@@ -245,6 +245,57 @@ async function sendOwnerSmsNotification(orderSummary: OrderSummary): Promise<voi
   }
 }
 
+// ============ Server-Side Validation ============
+
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const PHONE_REGEX = /^[\d\s\-+().]{10,20}$/;
+const MAX_NAME_LENGTH = 100;
+const MAX_NOTES_LENGTH = 500;
+const MAX_QUANTITY_PER_ITEM = 50;
+const MAX_ITEMS_PER_ORDER = 20;
+const MAX_ORDER_TOTAL = 5000;
+
+function validateEmail(email: string): boolean {
+  return EMAIL_REGEX.test(email) && email.length <= 254;
+}
+
+function validatePhone(phone: string): boolean {
+  return PHONE_REGEX.test(phone);
+}
+
+function sanitizeString(str: string, maxLength: number): string {
+  // Remove control characters and limit length
+  return str.replace(/[\x00-\x1F\x7F]/g, '').trim().substring(0, maxLength);
+}
+
+function validateOrderItems(items: OrderItem[]): { valid: boolean; error?: string } {
+  if (!Array.isArray(items) || items.length === 0) {
+    return { valid: false, error: 'Order must contain at least one item' };
+  }
+  if (items.length > MAX_ITEMS_PER_ORDER) {
+    return { valid: false, error: `Order cannot contain more than ${MAX_ITEMS_PER_ORDER} items` };
+  }
+
+  for (const item of items) {
+    if (!item.flavorId || typeof item.flavorId !== 'string') {
+      return { valid: false, error: 'Invalid flavor ID' };
+    }
+    if (!item.quantity || item.quantity < 1 || item.quantity > MAX_QUANTITY_PER_ITEM) {
+      return { valid: false, error: `Quantity must be between 1 and ${MAX_QUANTITY_PER_ITEM}` };
+    }
+    if (typeof item.unitPrice !== 'number' || item.unitPrice < 0 || item.unitPrice > 1000) {
+      return { valid: false, error: 'Invalid item price' };
+    }
+  }
+
+  return { valid: true };
+}
+
+function recalculateTotalAmount(items: OrderItem[]): number {
+  // Server-side recalculation - never trust client-provided total
+  return items.reduce((sum, item) => sum + (item.quantity * item.unitPrice), 0);
+}
+
 // ============ Handler ============
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -278,6 +329,50 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         code: 'DATA-403'
       });
     }
+
+    // Enhanced validation
+    if (!validateEmail(customer.email)) {
+      return res.status(400).json({
+        error: 'Invalid email address',
+        code: 'DATA-403'
+      });
+    }
+
+    if (!validatePhone(customer.phone)) {
+      return res.status(400).json({
+        error: 'Invalid phone number',
+        code: 'DATA-403'
+      });
+    }
+
+    // Validate order items
+    const itemsValidation = validateOrderItems(order.items);
+    if (!itemsValidation.valid) {
+      return res.status(400).json({
+        error: itemsValidation.error,
+        code: 'DATA-403'
+      });
+    }
+
+    // Recalculate total server-side (don't trust client)
+    const calculatedTotal = recalculateTotalAmount(order.items);
+    if (calculatedTotal > MAX_ORDER_TOTAL) {
+      return res.status(400).json({
+        error: `Order total cannot exceed $${MAX_ORDER_TOTAL}`,
+        code: 'DATA-403'
+      });
+    }
+
+    // Sanitize text inputs
+    const sanitizedCustomer = {
+      firstName: sanitizeString(customer.firstName, MAX_NAME_LENGTH),
+      lastName: sanitizeString(customer.lastName, MAX_NAME_LENGTH),
+      email: customer.email.toLowerCase().trim(),
+      phone: customer.phone.replace(/[^\d+]/g, ''),
+      notificationPref: customer.notificationPref,
+      smsOptIn: customer.smsOptIn,
+    };
+    const sanitizedNotes = sanitizeString(order.customerNotes || '', MAX_NOTES_LENGTH);
 
     // Read current data
     const [slotsData, customersData] = await Promise.all([
@@ -341,21 +436,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const now = new Date().toISOString();
 
     if (existingCustRowIndex === -1) {
-      // Create new customer
+      // Create new customer (using sanitized values)
       customerId = `cust-${Date.now().toString(36)}`;
       const newCustomer = [
-        customerId,                           // id
-        customer.firstName,                   // first_name
-        customer.lastName,                    // last_name
-        customer.email,                       // email
-        customer.phone,                       // phone
-        customer.notificationPref,            // notification_pref
-        customer.smsOptIn ? '1' : '0',        // sms_opt_in
-        '0',                                  // credit_balance
-        '1',                                  // total_orders
-        order.totalAmount.toString(),         // total_spent
-        now,                                  // created_at
-        now,                                  // updated_at
+        customerId,                             // id
+        sanitizedCustomer.firstName,            // first_name
+        sanitizedCustomer.lastName,             // last_name
+        sanitizedCustomer.email,                // email
+        sanitizedCustomer.phone,                // phone
+        sanitizedCustomer.notificationPref,     // notification_pref
+        sanitizedCustomer.smsOptIn ? '1' : '0', // sms_opt_in
+        '0',                                    // credit_balance
+        '1',                                    // total_orders
+        calculatedTotal.toString(),             // total_spent (use server-calculated total)
+        now,                                    // created_at
+        now,                                    // updated_at
       ];
       await appendRow('Customers', newCustomer);
     } else {
@@ -368,7 +463,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const updatedRow = [...existingRow];
       updatedRow[totalOrdersIdx] = ((parseInt(existingRow[totalOrdersIdx]) || 0) + 1).toString();
-      updatedRow[totalSpentIdx] = ((parseFloat(existingRow[totalSpentIdx]) || 0) + order.totalAmount).toString();
+      updatedRow[totalSpentIdx] = ((parseFloat(existingRow[totalSpentIdx]) || 0) + calculatedTotal).toString();
       updatedRow[updatedAtIdx] = now;
 
       await updateRow('Customers', existingCustRowIndex, updatedRow);
@@ -382,11 +477,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       order.bakeSlotId,
       order.pickupLocationId || '',           // pickup_location_id
       JSON.stringify(order.items),
-      order.totalAmount.toString(),
+      calculatedTotal.toString(),             // Use server-calculated total
       'submitted',
       '',                                     // payment_method
       'pending',                              // payment_status
-      order.customerNotes || '',
+      sanitizedNotes,                         // Use sanitized notes
       '',                                     // admin_notes
       now,
       now,
@@ -402,10 +497,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Send owner SMS notification (non-blocking - don't fail order if SMS fails)
     const bakeDate = slotRow[slotDateIdx] || 'TBD';
     sendOwnerSmsNotification({
-      customerName: `${customer.firstName} ${customer.lastName}`,
-      customerPhone: customer.phone,
+      customerName: `${sanitizedCustomer.firstName} ${sanitizedCustomer.lastName}`,
+      customerPhone: sanitizedCustomer.phone,
       items: order.items,
-      totalAmount: order.totalAmount,
+      totalAmount: calculatedTotal,
       bakeDate,
     }).catch(err => console.error('SMS notification error:', err));
 

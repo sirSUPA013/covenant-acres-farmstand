@@ -41,6 +41,22 @@ export function getCurrentUser() {
   return currentUser;
 }
 
+// Authorization check for sensitive operations
+function requireAuth(operation: string): void {
+  if (!currentUser) {
+    log('warn', 'Unauthorized operation attempted', { operation });
+    throw new Error('Authentication required');
+  }
+}
+
+function requireOwnerOrDev(operation: string): void {
+  requireAuth(operation);
+  if (!currentUser!.isOwner && !currentUser!.isDeveloper) {
+    log('warn', 'Insufficient privileges for operation', { operation, user: currentUser!.name, role: currentUser!.role });
+    throw new Error('Owner or developer privileges required');
+  }
+}
+
 // Login rate limiting (brute force protection)
 const LOGIN_MAX_ATTEMPTS = 5;
 const LOGIN_LOCKOUT_MINUTES = 15;
@@ -110,6 +126,52 @@ function recordLoginSuccess(): void {
   loginAttempts.failedAttempts = 0;
   loginAttempts.lastAttemptTime = 0;
   loginAttempts.lockedUntil = null;
+}
+
+// Input validation for financial and status fields
+const VALID_ORDER_STATUSES = new Set(['submitted', 'confirmed', 'ready', 'picked_up', 'canceled', 'no_show']);
+const VALID_PAYMENT_STATUSES = new Set(['pending', 'paid', 'refunded', 'voided']);
+const VALID_PAYMENT_METHODS = new Set(['cash', 'venmo', 'cashapp', 'zelle', 'credit', 'other']);
+const MAX_ORDER_AMOUNT = 10000;
+const MAX_CREDIT_ADJUSTMENT = 1000;
+const MIN_CREDIT_ADJUSTMENT = -1000;
+
+function validateOrderData(data: Record<string, unknown>): { valid: boolean; error?: string } {
+  if (data.status !== undefined && !VALID_ORDER_STATUSES.has(data.status as string)) {
+    return { valid: false, error: `Invalid order status: ${data.status}` };
+  }
+  if (data.payment_status !== undefined && !VALID_PAYMENT_STATUSES.has(data.payment_status as string)) {
+    return { valid: false, error: `Invalid payment status: ${data.payment_status}` };
+  }
+  if (data.payment_method !== undefined && !VALID_PAYMENT_METHODS.has(data.payment_method as string)) {
+    return { valid: false, error: `Invalid payment method: ${data.payment_method}` };
+  }
+  if (data.total_amount !== undefined) {
+    const amount = Number(data.total_amount);
+    if (isNaN(amount) || amount < 0 || amount > MAX_ORDER_AMOUNT) {
+      return { valid: false, error: `Invalid total amount: must be 0-${MAX_ORDER_AMOUNT}` };
+    }
+  }
+  if (data.credit_applied !== undefined) {
+    const credit = Number(data.credit_applied);
+    if (isNaN(credit) || credit < 0 || credit > MAX_ORDER_AMOUNT) {
+      return { valid: false, error: `Invalid credit applied: must be 0-${MAX_ORDER_AMOUNT}` };
+    }
+  }
+  return { valid: true };
+}
+
+function validateCreditAdjustment(amount: number, reason: string): { valid: boolean; error?: string } {
+  if (isNaN(amount)) {
+    return { valid: false, error: 'Credit adjustment amount must be a number' };
+  }
+  if (amount < MIN_CREDIT_ADJUSTMENT || amount > MAX_CREDIT_ADJUSTMENT) {
+    return { valid: false, error: `Credit adjustment must be between ${MIN_CREDIT_ADJUSTMENT} and ${MAX_CREDIT_ADJUSTMENT}` };
+  }
+  if (!reason || reason.trim().length < 3) {
+    return { valid: false, error: 'Credit adjustment requires a reason (min 3 characters)' };
+  }
+  return { valid: true };
 }
 
 // Field whitelists for SQL UPDATE operations (prevents SQL injection via field names)
@@ -220,7 +282,15 @@ export function setupIpcHandlers(): void {
   });
 
   ipcMain.handle('orders:update', async (_event, id, data) => {
+    requireAuth('orders:update');
     const db = getDb();
+
+    // Validate financial and status fields
+    const validation = validateOrderData(data);
+    if (!validation.valid) {
+      log('warn', 'Order update validation failed', { id, error: validation.error, data });
+      throw new Error(validation.error);
+    }
 
     // Check if status is changing - need to adjust bake_slots.current_orders
     if (data.status) {
@@ -349,6 +419,7 @@ export function setupIpcHandlers(): void {
   });
 
   ipcMain.handle('customers:update', async (_event, id, data) => {
+    requireAuth('customers:update');
     const db = getDb();
     const { fields, values } = filterAllowedFields(data, ALLOWED_CUSTOMER_FIELDS);
     if (fields.length === 0) {
@@ -362,7 +433,16 @@ export function setupIpcHandlers(): void {
   });
 
   ipcMain.handle('customers:issueCredit', async (_event, id, amount, reason) => {
+    requireAuth('customers:issueCredit');
     const db = getDb();
+
+    // Validate credit adjustment
+    const validation = validateCreditAdjustment(amount, reason || '');
+    if (!validation.valid) {
+      log('warn', 'Credit adjustment validation failed', { customerId: id, error: validation.error, amount, reason });
+      throw new Error(validation.error);
+    }
+
     const now = new Date().toISOString();
 
     db.prepare(
