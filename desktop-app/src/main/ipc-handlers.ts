@@ -41,6 +41,48 @@ export function getCurrentUser() {
   return currentUser;
 }
 
+// Field whitelists for SQL UPDATE operations (prevents SQL injection via field names)
+const ALLOWED_ORDER_FIELDS = new Set([
+  'status', 'payment_status', 'payment_method', 'admin_notes', 'credit_applied',
+  'total_amount', 'bake_slot_id', 'items', 'pickup_location_id'
+]);
+
+const ALLOWED_CUSTOMER_FIELDS = new Set([
+  'first_name', 'last_name', 'email', 'phone', 'notes', 'credit_balance', 'sms_opt_in'
+]);
+
+const ALLOWED_BAKE_SLOT_FIELDS = new Set([
+  'date', 'total_capacity', 'current_orders', 'is_published', 'notes', 'location_id'
+]);
+
+const ALLOWED_LOCATION_FIELDS = new Set([
+  'name', 'address', 'description', 'is_active', 'sort_order'
+]);
+
+// Recipe fields use camelCase in API but snake_case in DB
+const ALLOWED_RECIPE_FIELDS = new Set([
+  'name', 'flavorId', 'baseIngredients', 'foldIngredients', 'laminationIngredients',
+  'steps', 'yieldsLoaves', 'loafSize', 'notes', 'season', 'source'
+]);
+
+// Helper to filter and validate fields for UPDATE operations
+function filterAllowedFields(data: Record<string, unknown>, allowedFields: Set<string>): {
+  fields: string[];
+  values: unknown[];
+} {
+  const fields: string[] = [];
+  const values: unknown[] = [];
+
+  for (const [key, value] of Object.entries(data)) {
+    if (allowedFields.has(key)) {
+      fields.push(key);
+      values.push(value);
+    }
+  }
+
+  return { fields, values };
+}
+
 export function logAudit(action: string, entityType?: string | null, entityId?: string | null, details?: string) {
   const db = getDb();
   db.prepare(`
@@ -147,23 +189,28 @@ export function setupIpcHandlers(): void {
       }
     }
 
-    const fields = Object.keys(data)
-      .map((k) => `${k} = ?`)
-      .join(', ');
-    const values = [...Object.values(data), new Date().toISOString(), id];
+    const { fields, values } = filterAllowedFields(data, ALLOWED_ORDER_FIELDS);
+    if (fields.length === 0) {
+      log('warn', 'Order update attempted with no valid fields', { id, attempted: Object.keys(data) });
+      return;
+    }
+    const fieldsSql = fields.map((k) => `${k} = ?`).join(', ');
 
-    db.prepare(`UPDATE orders SET ${fields}, updated_at = ? WHERE id = ?`).run(...values);
-    log('info', 'Order updated', { id, changes: Object.keys(data) });
+    db.prepare(`UPDATE orders SET ${fieldsSql}, updated_at = ? WHERE id = ?`).run(...values, new Date().toISOString(), id);
+    log('info', 'Order updated', { id, changes: fields });
   });
 
   ipcMain.handle('orders:bulkUpdate', async (_event, ids: string[], data) => {
     const db = getDb();
-    const fields = Object.keys(data)
-      .map((k) => `${k} = ?`)
-      .join(', ');
+    const { fields, values } = filterAllowedFields(data, ALLOWED_ORDER_FIELDS);
+    if (fields.length === 0) {
+      log('warn', 'Bulk order update attempted with no valid fields', { attempted: Object.keys(data) });
+      return;
+    }
+    const fieldsSql = fields.map((k) => `${k} = ?`).join(', ');
     const now = new Date().toISOString();
 
-    const stmt = db.prepare(`UPDATE orders SET ${fields}, updated_at = ? WHERE id = ?`);
+    const stmt = db.prepare(`UPDATE orders SET ${fieldsSql}, updated_at = ? WHERE id = ?`);
     const updateMany = db.transaction((orderIds: string[]) => {
       for (const id of orderIds) {
         // If status is changing, adjust bake_slots.current_orders
@@ -195,12 +242,12 @@ export function setupIpcHandlers(): void {
           }
         }
 
-        stmt.run(...Object.values(data), now, id);
+        stmt.run(...values, now, id);
       }
     });
 
     updateMany(ids);
-    log('info', 'Bulk order update', { count: ids.length, changes: Object.keys(data) });
+    log('info', 'Bulk order update', { count: ids.length, changes: fields });
   });
 
   // Customers
@@ -227,13 +274,15 @@ export function setupIpcHandlers(): void {
 
   ipcMain.handle('customers:update', async (_event, id, data) => {
     const db = getDb();
-    const fields = Object.keys(data)
-      .map((k) => `${k} = ?`)
-      .join(', ');
-    const values = [...Object.values(data), new Date().toISOString(), id];
+    const { fields, values } = filterAllowedFields(data, ALLOWED_CUSTOMER_FIELDS);
+    if (fields.length === 0) {
+      log('warn', 'Customer update attempted with no valid fields', { id, attempted: Object.keys(data) });
+      return;
+    }
+    const fieldsSql = fields.map((k) => `${k} = ?`).join(', ');
 
-    db.prepare(`UPDATE customers SET ${fields}, updated_at = ? WHERE id = ?`).run(...values);
-    log('info', 'Customer updated', { id });
+    db.prepare(`UPDATE customers SET ${fieldsSql}, updated_at = ? WHERE id = ?`).run(...values, new Date().toISOString(), id);
+    log('info', 'Customer updated', { id, changes: fields });
   });
 
   ipcMain.handle('customers:issueCredit', async (_event, id, amount, reason) => {
@@ -375,15 +424,14 @@ export function setupIpcHandlers(): void {
       delete data.locationIds;
     }
 
-    // Update other fields if any remain
-    const updateFields = Object.keys(data);
-    if (updateFields.length > 0) {
-      const fields = updateFields.map((k) => `${k} = ?`).join(', ');
-      const values = [...Object.values(data), now, id];
-      db.prepare(`UPDATE bake_slots SET ${fields}, updated_at = ? WHERE id = ?`).run(...values);
+    // Update other fields if any remain (with field whitelist for security)
+    const { fields, values } = filterAllowedFields(data, ALLOWED_BAKE_SLOT_FIELDS);
+    if (fields.length > 0) {
+      const fieldsSql = fields.map((k) => `${k} = ?`).join(', ');
+      db.prepare(`UPDATE bake_slots SET ${fieldsSql}, updated_at = ? WHERE id = ?`).run(...values, now, id);
     }
 
-    log('info', 'Bake slot updated', { id });
+    log('info', 'Bake slot updated', { id, changes: fields });
   });
 
   ipcMain.handle('bakeSlots:delete', async (_event, id) => {
@@ -596,13 +644,15 @@ export function setupIpcHandlers(): void {
 
   ipcMain.handle('locations:update', async (_event, id, data) => {
     const db = getDb();
-    const fields = Object.keys(data)
-      .map((k) => `${k} = ?`)
-      .join(', ');
-    const values = [...Object.values(data), new Date().toISOString(), id];
+    const { fields, values } = filterAllowedFields(data, ALLOWED_LOCATION_FIELDS);
+    if (fields.length === 0) {
+      log('warn', 'Location update attempted with no valid fields', { id, attempted: Object.keys(data) });
+      return;
+    }
+    const fieldsSql = fields.map((k) => `${k} = ?`).join(', ');
 
-    db.prepare(`UPDATE locations SET ${fields}, updated_at = ? WHERE id = ?`).run(...values);
-    log('info', 'Location updated', { id });
+    db.prepare(`UPDATE locations SET ${fieldsSql}, updated_at = ? WHERE id = ?`).run(...values, new Date().toISOString(), id);
+    log('info', 'Location updated', { id, changes: fields });
   });
 
   ipcMain.handle('locations:delete', async (_event, id) => {
@@ -665,22 +715,34 @@ export function setupIpcHandlers(): void {
     const db = getDb();
     const updates: string[] = [];
     const values: unknown[] = [];
+    const JSON_FIELDS = ['baseIngredients', 'foldIngredients', 'laminationIngredients', 'steps'];
 
+    // Filter to only allowed fields for security
     Object.entries(data).forEach(([key, value]) => {
-      if (['baseIngredients', 'foldIngredients', 'laminationIngredients', 'steps'].includes(key)) {
-        updates.push(`${key.replace(/([A-Z])/g, '_$1').toLowerCase()} = ?`);
+      if (!ALLOWED_RECIPE_FIELDS.has(key)) {
+        log('warn', 'Recipe update attempted with disallowed field', { id, field: key });
+        return;
+      }
+      const dbField = key.replace(/([A-Z])/g, '_$1').toLowerCase();
+      if (JSON_FIELDS.includes(key)) {
+        updates.push(`${dbField} = ?`);
         values.push(JSON.stringify(value));
       } else {
-        updates.push(`${key.replace(/([A-Z])/g, '_$1').toLowerCase()} = ?`);
+        updates.push(`${dbField} = ?`);
         values.push(value);
       }
     });
+
+    if (updates.length === 0) {
+      log('warn', 'Recipe update attempted with no valid fields', { id, attempted: Object.keys(data) });
+      return;
+    }
 
     values.push(new Date().toISOString(), id);
     db.prepare(`UPDATE recipes SET ${updates.join(', ')}, updated_at = ? WHERE id = ?`).run(
       ...values
     );
-    log('info', 'Recipe updated', { id });
+    log('info', 'Recipe updated', { id, changes: updates.length });
   });
 
   ipcMain.handle('recipes:delete', async (_event, id) => {
@@ -718,6 +780,13 @@ export function setupIpcHandlers(): void {
 
   ipcMain.handle('ingredients:create', async (_event, data) => {
     const db = getDb();
+
+    // Validate package size to prevent division by zero
+    if (!data.packageSize || data.packageSize <= 0) {
+      log('error', 'Ingredient creation failed: invalid package size', { packageSize: data.packageSize });
+      throw new Error('Package size must be greater than zero');
+    }
+
     const id = `ing-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
     const now = new Date().toISOString();
     const costPerUnit = data.packagePrice / data.packageSize;
@@ -733,6 +802,13 @@ export function setupIpcHandlers(): void {
 
   ipcMain.handle('ingredients:update', async (_event, id, data) => {
     const db = getDb();
+
+    // Validate package size to prevent division by zero
+    if (!data.packageSize || data.packageSize <= 0) {
+      log('error', 'Ingredient update failed: invalid package size', { id, packageSize: data.packageSize });
+      throw new Error('Package size must be greater than zero');
+    }
+
     const costPerUnit = data.packagePrice / data.packageSize;
 
     db.prepare(`
@@ -1395,7 +1471,9 @@ export function setupIpcHandlers(): void {
   // Setup developer account - only works if no developers exist
   ipcMain.handle('admin:setupDeveloper', async (_event, name: string, pin: string, secret: string) => {
     // Require a secret key to prevent unauthorized developer creation
-    if (secret !== 'covenant-dev-2026') {
+    // Secret must be set via DEV_SETUP_SECRET environment variable
+    const expectedSecret = process.env.DEV_SETUP_SECRET;
+    if (!expectedSecret || secret !== expectedSecret) {
       return { success: false, error: 'Invalid secret' };
     }
 
