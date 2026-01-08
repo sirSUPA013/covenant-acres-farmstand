@@ -404,6 +404,60 @@ export async function initDatabase(): Promise<void> {
     log('info', 'Added category column to ingredients');
   }
 
+  if (!ingredientColumns.some(col => col.name === 'density_g_per_ml')) {
+    db.exec("ALTER TABLE ingredients ADD COLUMN density_g_per_ml REAL");
+    log('info', 'Added density_g_per_ml column to ingredients');
+
+    // Populate density for common ingredients
+    const densityValues: Record<string, number> = {
+      // Flours and powders (approximate, sifted)
+      'Flour': 0.53,           // ~125g per cup
+      'Cocoa Powder': 0.42,    // ~100g per cup
+      'Garlic Powder': 0.51,   // ~120g per cup
+      'Cinnamon': 0.53,        // ~125g per cup
+      'Ginger': 0.42,          // ~100g per cup
+      // Sugars
+      'Cane Sugar': 0.85,      // ~200g per cup
+      'Brown Sugar': 0.83,     // ~195g per cup (packed)
+      'Salt': 1.22,            // ~288g per cup (table salt)
+      // Liquids
+      'Maple Syrup': 1.37,     // denser than water
+      'Molasses': 1.41,        // denser than water
+      'Orange Juice': 1.04,    // close to water
+      'Vanilla Extract': 0.88, // similar to alcohol
+      // Fats
+      'Butter': 0.91,          // ~215g per cup, slightly less than water
+      // Misc
+      'Chocolate Morsels': 0.64, // ~150g per cup (loose)
+      'Pecans': 0.42,          // ~100g per cup (chopped)
+      'Fresh Cranberries': 0.42, // ~100g per cup
+      'Cheddar Cheese': 0.47,  // ~110g per cup (shredded)
+      'Jalapenos (jarred)': 0.85, // similar to water with solids
+    };
+
+    for (const [name, density] of Object.entries(densityValues)) {
+      db.prepare("UPDATE ingredients SET density_g_per_ml = ? WHERE name = ?").run(density, name);
+    }
+    log('info', 'Populated density values for common ingredients');
+  }
+
+  // Always ensure density values are populated for ingredients that don't have them
+  const defaultDensities: Record<string, number> = {
+    'Flour': 0.53, 'Cocoa Powder': 0.42, 'Garlic Powder': 0.51, 'Cinnamon': 0.53,
+    'Ginger': 0.42, 'Cane Sugar': 0.85, 'Brown Sugar': 0.83, 'Salt': 1.22,
+    'Maple Syrup': 1.37, 'Molasses': 1.41, 'Orange Juice': 1.04, 'Vanilla Extract': 0.88,
+    'Butter': 0.91, 'Chocolate Morsels': 0.64, 'Pecans': 0.42, 'Fresh Cranberries': 0.42,
+    'Cheddar Cheese': 0.47, 'Jalapenos (jarred)': 0.85,
+  };
+  let densitiesUpdated = 0;
+  for (const [name, density] of Object.entries(defaultDensities)) {
+    const result = db.prepare("UPDATE ingredients SET density_g_per_ml = ? WHERE name = ? AND density_g_per_ml IS NULL").run(density, name);
+    if (result.changes > 0) densitiesUpdated++;
+  }
+  if (densitiesUpdated > 0) {
+    log('info', `Populated missing density values for ${densitiesUpdated} ingredients`);
+  }
+
   // Migrations for settings table - payment links
   const settingsColumns = db.prepare("PRAGMA table_info(settings)").all() as Array<{ name: string }>;
 
@@ -478,6 +532,83 @@ export async function initDatabase(): Promise<void> {
     }
   }
 
+  // Migration: Populate base_unit and density for recipe ingredients that are missing them
+  // This ensures cost calculations work correctly for existing recipes
+  interface RecipeIngredient {
+    ingredient_id?: string;
+    name: string;
+    quantity: number;
+    unit: string;
+    base_unit?: string;
+    cost_per_unit?: number;
+    density_g_per_ml?: number;
+    phase?: string;
+  }
+
+  const recipesToFix = db.prepare(`
+    SELECT id, base_ingredients, fold_ingredients, lamination_ingredients
+    FROM recipes
+  `).all() as Array<{ id: string; base_ingredients: string; fold_ingredients: string | null; lamination_ingredients: string | null }>;
+
+  // Build a map of ingredient IDs to their units and densities
+  const ingredientData = new Map<string, { unit: string; density: number | null }>();
+  const libIngredients = db.prepare("SELECT id, unit, density_g_per_ml FROM ingredients").all() as Array<{ id: string; unit: string; density_g_per_ml: number | null }>;
+  for (const ing of libIngredients) {
+    ingredientData.set(ing.id, { unit: ing.unit, density: ing.density_g_per_ml });
+  }
+
+  let recipesUpdated = 0;
+  for (const recipe of recipesToFix) {
+    let needsUpdate = false;
+
+    const processIngredients = (jsonStr: string | null): string | null => {
+      if (!jsonStr) return null;
+      try {
+        const ingredients = JSON.parse(jsonStr) as RecipeIngredient[];
+        let modified = false;
+        for (const ing of ingredients) {
+          if (ing.ingredient_id) {
+            const libData = ingredientData.get(ing.ingredient_id);
+            if (libData) {
+              // Populate base_unit if missing
+              if (!ing.base_unit) {
+                ing.base_unit = libData.unit;
+                modified = true;
+              }
+              // Populate density if missing and available
+              if (ing.density_g_per_ml === undefined && libData.density !== null) {
+                ing.density_g_per_ml = libData.density;
+                modified = true;
+              }
+            }
+          }
+        }
+        if (modified) {
+          needsUpdate = true;
+          return JSON.stringify(ingredients);
+        }
+        return jsonStr;
+      } catch {
+        return jsonStr;
+      }
+    };
+
+    const newBase = processIngredients(recipe.base_ingredients);
+    const newFold = processIngredients(recipe.fold_ingredients);
+    const newLamination = processIngredients(recipe.lamination_ingredients);
+
+    if (needsUpdate) {
+      db.prepare(`
+        UPDATE recipes SET base_ingredients = ?, fold_ingredients = ?, lamination_ingredients = ?, updated_at = ?
+        WHERE id = ?
+      `).run(newBase, newFold, newLamination, new Date().toISOString(), recipe.id);
+      recipesUpdated++;
+    }
+  }
+  if (recipesUpdated > 0) {
+    log('info', `Migrated ${recipesUpdated} recipes to include base_unit and density for ingredients`);
+  }
+
   // Initialize overhead_settings if empty
   const overheadCount = db.prepare("SELECT COUNT(*) as count FROM overhead_settings").get() as { count: number };
   if (overheadCount.count === 0) {
@@ -490,40 +621,40 @@ export async function initDatabase(): Promise<void> {
   if (ingredientCount.count === 0) {
     const now = new Date().toISOString();
     const seedIngredients = [
-      // Base ingredients
-      { name: 'Flour', unit: 'g', package_price: 18.71, package_size: 9072, package_unit: '20lb', vendor: 'Costco', category: 'base' },
-      { name: 'Salt', unit: 'g', package_price: 7.05, package_size: 2116, package_unit: '4.7lb', vendor: 'Costco', category: 'base' },
+      // Base ingredients (density in g/ml)
+      { name: 'Flour', unit: 'g', package_price: 18.71, package_size: 9072, package_unit: '20lb', vendor: 'Costco', category: 'base', density: 0.53 },
+      { name: 'Salt', unit: 'g', package_price: 7.05, package_size: 2116, package_unit: '4.7lb', vendor: 'Costco', category: 'base', density: 1.22 },
       // Sweeteners
-      { name: 'Cane Sugar', unit: 'g', package_price: 12.83, package_size: 4536, package_unit: '10lb', vendor: 'Costco', category: 'sweetener' },
-      { name: 'Brown Sugar', unit: 'g', package_price: 4.11, package_size: 680, package_unit: '24oz', vendor: 'Walmart', category: 'sweetener' },
-      { name: 'Maple Syrup', unit: 'g', package_price: 12.00, package_size: 950, package_unit: '32oz', vendor: 'Costco', category: 'sweetener' },
+      { name: 'Cane Sugar', unit: 'g', package_price: 12.83, package_size: 4536, package_unit: '10lb', vendor: 'Costco', category: 'sweetener', density: 0.85 },
+      { name: 'Brown Sugar', unit: 'g', package_price: 4.11, package_size: 680, package_unit: '24oz', vendor: 'Walmart', category: 'sweetener', density: 0.83 },
+      { name: 'Maple Syrup', unit: 'g', package_price: 12.00, package_size: 950, package_unit: '32oz', vendor: 'Costco', category: 'sweetener', density: 1.37 },
       // Spices
-      { name: 'Cinnamon', unit: 'g', package_price: 5.34, package_size: 303, package_unit: '10.7oz', vendor: 'Costco', category: 'spice' },
-      { name: 'Garlic Powder', unit: 'g', package_price: 9.08, package_size: 624, package_unit: '22oz', vendor: 'Costco', category: 'spice' },
-      { name: 'Cocoa Powder', unit: 'g', package_price: 6.61, package_size: 227, package_unit: '8oz', vendor: 'Walmart', category: 'spice' },
-      { name: 'Ginger', unit: 'g', package_price: 4.67, package_size: 45, package_unit: '1.6oz', vendor: 'Walmart', category: 'spice' },
+      { name: 'Cinnamon', unit: 'g', package_price: 5.34, package_size: 303, package_unit: '10.7oz', vendor: 'Costco', category: 'spice', density: 0.53 },
+      { name: 'Garlic Powder', unit: 'g', package_price: 9.08, package_size: 624, package_unit: '22oz', vendor: 'Costco', category: 'spice', density: 0.51 },
+      { name: 'Cocoa Powder', unit: 'g', package_price: 6.61, package_size: 227, package_unit: '8oz', vendor: 'Walmart', category: 'spice', density: 0.42 },
+      { name: 'Ginger', unit: 'g', package_price: 4.67, package_size: 45, package_unit: '1.6oz', vendor: 'Walmart', category: 'spice', density: 0.42 },
       // Misc
-      { name: 'Jalapenos (jarred)', unit: 'g', package_price: 2.55, package_size: 340, package_unit: '12oz', vendor: 'Walmart', category: 'misc' },
-      { name: 'Cheddar Cheese', unit: 'g', package_price: 10.87, package_size: 1134, package_unit: '2.5lb', vendor: 'Costco', category: 'misc' },
-      { name: 'Pecans', unit: 'g', package_price: 13.90, package_size: 907, package_unit: '2lb', vendor: 'Costco', category: 'misc' },
-      { name: 'Orange', unit: 'each', package_price: 1.04, package_size: 1, package_unit: '1 each', vendor: 'Walmart', category: 'misc' },
-      { name: 'Orange Juice', unit: 'g', package_price: 4.69, package_size: 1361, package_unit: '46oz', vendor: 'Walmart', category: 'misc' },
-      { name: 'Fresh Cranberries', unit: 'g', package_price: 1.04, package_size: 340, package_unit: '12oz', vendor: 'Walmart', category: 'misc' },
-      { name: 'Butter', unit: 'g', package_price: 14.97, package_size: 907, package_unit: '2lb', vendor: 'Costco', category: 'misc' },
-      { name: 'Vanilla Extract', unit: 'tsp', package_price: 10.68, package_size: 96, package_unit: '16oz', vendor: 'Costco', category: 'misc' },
-      { name: 'Chocolate Morsels', unit: 'g', package_price: 16.04, package_size: 2041, package_unit: '72oz', vendor: 'Costco', category: 'misc' },
-      { name: 'Molasses', unit: 'g', package_price: 8.00, package_size: 680, package_unit: '24oz', vendor: 'Azure', category: 'sweetener' },
+      { name: 'Jalapenos (jarred)', unit: 'g', package_price: 2.55, package_size: 340, package_unit: '12oz', vendor: 'Walmart', category: 'misc', density: 0.85 },
+      { name: 'Cheddar Cheese', unit: 'g', package_price: 10.87, package_size: 1134, package_unit: '2.5lb', vendor: 'Costco', category: 'misc', density: 0.47 },
+      { name: 'Pecans', unit: 'g', package_price: 13.90, package_size: 907, package_unit: '2lb', vendor: 'Costco', category: 'misc', density: 0.42 },
+      { name: 'Orange', unit: 'each', package_price: 1.04, package_size: 1, package_unit: '1 each', vendor: 'Walmart', category: 'misc', density: null },
+      { name: 'Orange Juice', unit: 'g', package_price: 4.69, package_size: 1361, package_unit: '46oz', vendor: 'Walmart', category: 'misc', density: 1.04 },
+      { name: 'Fresh Cranberries', unit: 'g', package_price: 1.04, package_size: 340, package_unit: '12oz', vendor: 'Walmart', category: 'misc', density: 0.42 },
+      { name: 'Butter', unit: 'g', package_price: 14.97, package_size: 907, package_unit: '2lb', vendor: 'Costco', category: 'misc', density: 0.91 },
+      { name: 'Vanilla Extract', unit: 'tsp', package_price: 10.68, package_size: 96, package_unit: '16oz', vendor: 'Costco', category: 'misc', density: 0.88 },
+      { name: 'Chocolate Morsels', unit: 'g', package_price: 16.04, package_size: 2041, package_unit: '72oz', vendor: 'Costco', category: 'misc', density: 0.64 },
+      { name: 'Molasses', unit: 'g', package_price: 8.00, package_size: 680, package_unit: '24oz', vendor: 'Azure', category: 'sweetener', density: 1.41 },
     ];
 
     const insertStmt = db.prepare(`
-      INSERT INTO ingredients (id, name, unit, cost_per_unit, package_price, package_size, package_unit, vendor, category, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO ingredients (id, name, unit, cost_per_unit, package_price, package_size, package_unit, vendor, category, density_g_per_ml, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     for (const ing of seedIngredients) {
       const id = `ing-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
       const costPerUnit = ing.package_price / ing.package_size;
-      insertStmt.run(id, ing.name, ing.unit, costPerUnit, ing.package_price, ing.package_size, ing.package_unit, ing.vendor, ing.category, now, now);
+      insertStmt.run(id, ing.name, ing.unit, costPerUnit, ing.package_price, ing.package_size, ing.package_unit, ing.vendor, ing.category, ing.density, now, now);
     }
     log('info', `Seeded ${seedIngredients.length} ingredients from Stephanie's data`);
   }

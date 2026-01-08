@@ -1003,9 +1003,9 @@ export function setupIpcHandlers(): void {
     const costPerUnit = data.packagePrice / data.packageSize;
 
     db.prepare(`
-      INSERT INTO ingredients (id, name, unit, cost_per_unit, package_price, package_size, package_unit, vendor, category, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, data.name, data.unit, costPerUnit, data.packagePrice, data.packageSize, data.packageUnit || null, data.vendor || null, data.category || null, now, now);
+      INSERT INTO ingredients (id, name, unit, cost_per_unit, package_price, package_size, package_unit, vendor, category, density_g_per_ml, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, data.name, data.unit, costPerUnit, data.packagePrice, data.packageSize, data.packageUnit || null, data.vendor || null, data.category || null, data.density || null, now, now);
 
     log('info', 'Ingredient created', { id, name: data.name });
     return { id };
@@ -1025,9 +1025,9 @@ export function setupIpcHandlers(): void {
     db.prepare(`
       UPDATE ingredients
       SET name = ?, unit = ?, cost_per_unit = ?, package_price = ?, package_size = ?,
-          package_unit = ?, vendor = ?, category = ?, updated_at = ?
+          package_unit = ?, vendor = ?, category = ?, density_g_per_ml = ?, updated_at = ?
       WHERE id = ?
-    `).run(data.name, data.unit, costPerUnit, data.packagePrice, data.packageSize, data.packageUnit || null, data.vendor || null, data.category || null, new Date().toISOString(), id);
+    `).run(data.name, data.unit, costPerUnit, data.packagePrice, data.packageSize, data.packageUnit || null, data.vendor || null, data.category || null, data.density || null, new Date().toISOString(), id);
 
     log('info', 'Ingredient updated', { id, name: data.name });
   });

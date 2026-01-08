@@ -12,7 +12,7 @@ import { initLogger, log } from './logger';
 
 let mainWindow: BrowserWindow | null = null;
 
-const isDev = process.env.NODE_ENV === 'development';
+const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 
 // Single instance lock - focus existing window if already running
 const gotTheLock = app.requestSingleInstanceLock();
@@ -46,7 +46,8 @@ async function createWindow(): Promise<void> {
 
   // Load the app
   if (isDev) {
-    await mainWindow.loadURL('http://localhost:5173');
+    const devServerUrl = process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173';
+    await mainWindow.loadURL(devServerUrl);
     mainWindow.webContents.openDevTools();
   } else {
     await mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));

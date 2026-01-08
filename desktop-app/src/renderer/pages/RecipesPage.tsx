@@ -25,6 +25,7 @@ interface Ingredient {
   unit: string;
   base_unit?: string; // The unit from the ingredient library (for cost calculation)
   cost_per_unit?: number;
+  density_g_per_ml?: number; // Density for weight/volume conversions
   phase?: 'base' | 'fold' | 'lamination';
 }
 
@@ -44,33 +45,69 @@ const UNIT_TO_ML: Record<string, number> = {
   'fl oz': 29.5735,
 };
 
-// Convert quantity from one unit to another
-function convertUnits(quantity: number, fromUnit: string, toUnit: string): number {
+// Check if a unit is a weight unit
+function isWeightUnit(unit: string): boolean {
+  return unit in UNIT_TO_GRAMS;
+}
+
+// Check if a unit is a volume unit
+function isVolumeUnit(unit: string): boolean {
+  return unit in UNIT_TO_ML;
+}
+
+// Convert quantity from one unit to another, with optional density for cross-type conversion
+function convertUnits(quantity: number, fromUnit: string, toUnit: string, densityGPerMl?: number): number {
   if (fromUnit === toUnit) return quantity;
-  
-  // Check if both are weight units
-  if (UNIT_TO_GRAMS[fromUnit] && UNIT_TO_GRAMS[toUnit]) {
+
+  const fromIsWeight = isWeightUnit(fromUnit);
+  const fromIsVolume = isVolumeUnit(fromUnit);
+  const toIsWeight = isWeightUnit(toUnit);
+  const toIsVolume = isVolumeUnit(toUnit);
+
+  // Same type conversions (weight-to-weight or volume-to-volume)
+  if (fromIsWeight && toIsWeight) {
     const inGrams = quantity * UNIT_TO_GRAMS[fromUnit];
     return inGrams / UNIT_TO_GRAMS[toUnit];
   }
-  
-  // Check if both are volume units
-  if (UNIT_TO_ML[fromUnit] && UNIT_TO_ML[toUnit]) {
+
+  if (fromIsVolume && toIsVolume) {
     const inMl = quantity * UNIT_TO_ML[fromUnit];
     return inMl / UNIT_TO_ML[toUnit];
   }
-  
-  // "each" or incompatible units - no conversion possible
+
+  // Cross-type conversions require density
+  if (densityGPerMl && densityGPerMl > 0) {
+    // Volume to weight: convert to ml, then multiply by density to get grams
+    if (fromIsVolume && toIsWeight) {
+      const inMl = quantity * UNIT_TO_ML[fromUnit];
+      const inGrams = inMl * densityGPerMl;
+      return inGrams / UNIT_TO_GRAMS[toUnit];
+    }
+
+    // Weight to volume: convert to grams, then divide by density to get ml
+    if (fromIsWeight && toIsVolume) {
+      const inGrams = quantity * UNIT_TO_GRAMS[fromUnit];
+      const inMl = inGrams / densityGPerMl;
+      return inMl / UNIT_TO_ML[toUnit];
+    }
+  }
+
+  // "each" or incompatible units without density - no conversion possible
   return quantity;
 }
 
 // Calculate ingredient cost with proper unit conversion
 function calculateIngredientCost(ing: Ingredient): number {
   if (!ing.cost_per_unit || !ing.quantity) return 0;
-  
+
   const baseUnit = ing.base_unit || ing.unit; // Fall back to recipe unit if no base_unit
-  const quantityInBaseUnit = convertUnits(ing.quantity, ing.unit, baseUnit);
-  return quantityInBaseUnit * ing.cost_per_unit;
+  const quantityInBaseUnit = convertUnits(ing.quantity, ing.unit, baseUnit, ing.density_g_per_ml);
+  const cost = quantityInBaseUnit * ing.cost_per_unit;
+
+  // Debug logging
+  console.log(`[COST] ${ing.name}: qty=${ing.quantity} ${ing.unit} -> ${quantityInBaseUnit.toFixed(4)} ${baseUnit}, cost=$${cost.toFixed(4)}, density=${ing.density_g_per_ml || 'NONE'}`);
+
+  return cost;
 }
 
 // Step with ID for drag-and-drop
@@ -93,6 +130,7 @@ interface LibraryIngredient {
   package_unit: string;
   vendor: string;
   category: string;
+  density_g_per_ml?: number;
 }
 
 interface Recipe {
@@ -444,6 +482,7 @@ function RecipesPage() {
   }
 
   function selectIngredientFromLibrary(index: number, libIngredient: LibraryIngredient) {
+    console.log('[SELECT] Library ingredient:', libIngredient);
     const updated = [...editIngredients];
     updated[index] = {
       ...updated[index],
@@ -452,13 +491,22 @@ function RecipesPage() {
       unit: libIngredient.unit,
       base_unit: libIngredient.unit, // Store the library's unit for cost calculation
       cost_per_unit: libIngredient.cost_per_unit,
+      density_g_per_ml: libIngredient.density_g_per_ml, // Store density for cross-type conversions
     };
+    console.log('[SELECT] Updated ingredient:', updated[index]);
     setEditIngredients(updated);
   }
 
   function updateIngredient(index: number, field: keyof Ingredient, value: string | number) {
     const updated = [...editIngredients];
     updated[index] = { ...updated[index], [field]: value };
+
+    // Debug alert when unit changes
+    if (field === 'unit') {
+      const ing = updated[index];
+      alert(`DEBUG: ${ing.name}\nbase_unit: ${ing.base_unit || 'NOT SET'}\ndensity: ${ing.density_g_per_ml || 'NOT SET'}\nChanged to: ${value}`);
+    }
+
     setEditIngredients(updated);
   }
 
@@ -897,6 +945,9 @@ function RecipesPage() {
                           {ing.cost_per_unit
                             ? `$${calculateIngredientCost(ing).toFixed(2)}`
                             : '-'}
+                          <small style={{display: 'block', fontSize: '9px', color: '#888'}}>
+                            base:{ing.base_unit || '?'} d:{ing.density_g_per_ml?.toFixed(2) || '?'}
+                          </small>
                         </div>
                         <select
                           className="ingredient-phase-select"
