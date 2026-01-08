@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 
 interface BakeSlot {
@@ -232,7 +232,6 @@ function ConfigPage() {
     setIngredientSuccess(null);
 
     try {
-      const ingredientName = ingredientForm.name;
       if (editingIngredient) {
         await window.api.updateIngredient(editingIngredient.id, {
           name: ingredientForm.name,

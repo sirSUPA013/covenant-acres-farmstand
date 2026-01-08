@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 
 interface ExtraProduction {
   id: string;
@@ -33,7 +33,7 @@ interface ProductionAnalytics {
   gifted: { count: number; loaves: number; cost: number };
   wasted: { count: number; loaves: number; cost: number };
   personal: { count: number; loaves: number };
-  pending: { count: number; loaves: number };
+  pending?: { count: number; loaves: number };
 }
 
 const DISPOSITIONS = ['sold', 'pending', 'gifted', 'wasted', 'personal'] as const;
@@ -278,7 +278,7 @@ function ProductionPage() {
           </div>
           <div className="stat-card">
             <div className="stat-value" style={{ color: DISPOSITION_COLORS.pending }}>
-              {analytics.pending.loaves}
+              {analytics.pending?.loaves ?? 0}
             </div>
             <div className="stat-label">Pending (unsold)</div>
           </div>

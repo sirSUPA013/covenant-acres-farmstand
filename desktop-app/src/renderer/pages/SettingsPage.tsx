@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 interface Settings {
@@ -171,7 +171,7 @@ function SettingsPage() {
       return;
     }
 
-    const result = await window.api.createAdminUser(newUserName.trim(), newUserPin);
+    const result = await window.api.createAdminUser({ name: newUserName.trim(), pin: newUserPin, role: 'staff' });
     if (result.success) {
       setMessage({ type: 'success', text: 'User created successfully' });
       setShowAddUser(false);

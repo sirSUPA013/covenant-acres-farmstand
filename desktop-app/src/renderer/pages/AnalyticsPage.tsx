@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 
 interface SalesSummary {
   totalOrders: number;
@@ -35,12 +35,12 @@ interface DateRange {
 }
 
 interface ExtraProductionAnalytics {
-  sold: { count: number; quantity: number; revenue: number };
-  gifted: { count: number; quantity: number };
-  wasted: { count: number; quantity: number };
-  personal: { count: number; quantity: number };
-  totalLoaves: number;
+  sold: { count: number; loaves: number; revenue: number };
+  gifted: { count: number; loaves: number; cost: number };
+  wasted: { count: number; loaves: number; cost: number };
+  personal: { count: number; loaves: number };
 }
+
 
 interface ProfitPerHourData {
   bakeSlots: { count: number; loaves: number; revenue: number; cogs: number; profit: number; timeMinutes: number };
@@ -155,7 +155,6 @@ function AnalyticsPage() {
   const totalProfit = bakeSlotProfits.reduce((sum, slot) => sum + slot.profit, 0);
   const totalCogs = bakeSlotProfits.reduce((sum, slot) => sum + slot.cogs, 0);
   const totalBakeRevenue = bakeSlotProfits.reduce((sum, slot) => sum + slot.revenue, 0);
-  const avgMargin = totalBakeRevenue > 0 ? ((totalProfit / totalBakeRevenue) * 100) : 0;
 
   return (
     <div className="analytics-page">
@@ -336,37 +335,37 @@ function AnalyticsPage() {
               <div className="card-header">
                 <h2 className="card-title">Extra Production</h2>
               </div>
-              {!extraProduction || extraProduction.totalLoaves === 0 ? (
+              {!extraProduction || (extraProduction.sold.loaves + extraProduction.gifted.loaves + extraProduction.wasted.loaves + extraProduction.personal.loaves) === 0 ? (
                 <p className="text-gray">No extra production logged for this period</p>
               ) : (
                 <div className="extra-production-stats">
                   <div className="extra-stat-row sold">
                     <div className="extra-stat-label">Walk-in Sales</div>
                     <div className="extra-stat-values">
-                      <span className="extra-stat-qty">{extraProduction.sold.quantity} loaves</span>
+                      <span className="extra-stat-qty">{extraProduction.sold.loaves} loaves</span>
                       <span className="extra-stat-revenue">{formatCurrency(extraProduction.sold.revenue)}</span>
                     </div>
                   </div>
                   <div className="extra-stat-row gifted">
                     <div className="extra-stat-label">Gifted</div>
                     <div className="extra-stat-values">
-                      <span className="extra-stat-qty">{extraProduction.gifted.quantity} loaves</span>
+                      <span className="extra-stat-qty">{extraProduction.gifted.loaves} loaves</span>
                     </div>
                   </div>
                   <div className="extra-stat-row wasted">
                     <div className="extra-stat-label">Wasted</div>
                     <div className="extra-stat-values">
-                      <span className="extra-stat-qty">{extraProduction.wasted.quantity} loaves</span>
+                      <span className="extra-stat-qty">{extraProduction.wasted.loaves} loaves</span>
                     </div>
                   </div>
                   <div className="extra-stat-row personal">
                     <div className="extra-stat-label">Personal Use</div>
                     <div className="extra-stat-values">
-                      <span className="extra-stat-qty">{extraProduction.personal.quantity} loaves</span>
+                      <span className="extra-stat-qty">{extraProduction.personal.loaves} loaves</span>
                     </div>
                   </div>
                   <div className="extra-stat-total">
-                    <span>Total Extra: {extraProduction.totalLoaves} loaves</span>
+                    <span>Total Extra: {(extraProduction.sold.loaves + extraProduction.gifted.loaves + extraProduction.wasted.loaves + extraProduction.personal.loaves)} loaves</span>
                   </div>
                 </div>
               )}

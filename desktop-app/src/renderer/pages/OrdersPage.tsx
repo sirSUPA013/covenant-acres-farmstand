@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 
 interface Order {
   id: string;
@@ -16,6 +16,7 @@ interface Order {
   status: string;
   payment_status: string;
   admin_notes: string;
+  notes?: string;
   created_at: string;
 }
 
@@ -88,7 +89,7 @@ function OrdersPage() {
   async function loadSettings() {
     try {
       const settings = await window.api.getSettings();
-      setRequirePaymentMethod(settings.requirePaymentMethod || false);
+      setRequirePaymentMethod((settings as { requirePaymentMethod?: boolean }).requirePaymentMethod || false);
     } catch (error) {
       console.error('Failed to load settings:', error);
     }

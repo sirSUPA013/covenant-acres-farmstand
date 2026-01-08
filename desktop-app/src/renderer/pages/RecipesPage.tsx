@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   DndContext,
   closestCenter,
@@ -902,7 +902,7 @@ function RecipesPage() {
                           className="ingredient-phase-select"
                           value={ing.phase || 'base'}
                           onChange={(e) =>
-                            updateIngredient(i, 'phase', e.target.value as Ingredient['phase'])
+                            updateIngredient(i, 'phase', e.target.value)
                           }
                         >
                           {INGREDIENT_PHASES.map((phase) => (
