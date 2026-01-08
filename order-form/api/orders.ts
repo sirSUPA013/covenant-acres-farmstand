@@ -4,8 +4,148 @@
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { readSheet, appendRow, updateRow } from './lib/_sheets';
-import { ERROR_CODES } from './lib/_errors';
+import { createSign } from 'crypto';
+
+// ============ Google Sheets Integration ============
+
+interface ServiceAccountCredentials {
+  client_email: string;
+  private_key: string;
+}
+
+interface TokenResponse {
+  access_token: string;
+  expires_in: number;
+}
+
+let cachedToken: { token: string; expires: number } | null = null;
+
+function createJWT(credentials: ServiceAccountCredentials): string {
+  const now = Math.floor(Date.now() / 1000);
+  const header = { alg: 'RS256', typ: 'JWT' };
+  const payload = {
+    iss: credentials.client_email,
+    scope: 'https://www.googleapis.com/auth/spreadsheets',
+    aud: 'https://oauth2.googleapis.com/token',
+    iat: now,
+    exp: now + 3600,
+  };
+
+  const base64Header = Buffer.from(JSON.stringify(header)).toString('base64url');
+  const base64Payload = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const signatureInput = `${base64Header}.${base64Payload}`;
+
+  const sign = createSign('RSA-SHA256');
+  sign.update(signatureInput);
+  const signature = sign.sign(credentials.private_key, 'base64url');
+
+  return `${signatureInput}.${signature}`;
+}
+
+async function getAccessToken(credentials: ServiceAccountCredentials): Promise<string> {
+  // Use cached token if valid
+  if (cachedToken && cachedToken.expires > Date.now()) {
+    return cachedToken.token;
+  }
+
+  const jwt = createJWT(credentials);
+  const response = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+      assertion: jwt,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Token exchange failed: ${await response.text()}`);
+  }
+
+  const data = await response.json() as TokenResponse;
+  cachedToken = {
+    token: data.access_token,
+    expires: Date.now() + (data.expires_in - 60) * 1000,
+  };
+  return data.access_token;
+}
+
+function getConfig() {
+  const credentialsJson = process.env.GOOGLE_SHEETS_CREDENTIALS;
+  const spreadsheetId = process.env.GOOGLE_SHEETS_SPREADSHEET_ID;
+
+  if (!credentialsJson || !spreadsheetId) {
+    throw new Error('Missing Google Sheets configuration');
+  }
+
+  return {
+    credentials: JSON.parse(credentialsJson) as ServiceAccountCredentials,
+    spreadsheetId: spreadsheetId.trim(),
+  };
+}
+
+async function readSheet(sheetName: string): Promise<string[][]> {
+  const { credentials, spreadsheetId } = getConfig();
+  const accessToken = await getAccessToken(credentials);
+
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(sheetName)}`;
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Sheets read error: ${await response.text()}`);
+  }
+
+  const data = await response.json() as { values?: string[][] };
+  return data.values || [];
+}
+
+async function appendRow(sheetName: string, values: string[]): Promise<void> {
+  const { credentials, spreadsheetId } = getConfig();
+  const accessToken = await getAccessToken(credentials);
+
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(sheetName)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      values: [values],
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Sheets append error: ${await response.text()}`);
+  }
+}
+
+async function updateRow(sheetName: string, rowIndex: number, values: string[]): Promise<void> {
+  const { credentials, spreadsheetId } = getConfig();
+  const accessToken = await getAccessToken(credentials);
+
+  // A1 notation for the row (rowIndex is 0-based, Sheets is 1-based)
+  const range = `${sheetName}!A${rowIndex + 1}`;
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`;
+
+  const response = await fetch(url, {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      values: [values],
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Sheets update error: ${await response.text()}`);
+  }
+}
 
 // ============ Data Types ============
 
@@ -179,14 +319,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!order?.id || !order?.bakeSlotId || !order?.items?.length) {
       return res.status(400).json({
         error: 'Invalid order data',
-        code: ERROR_CODES.DATA_INVALID
+        code: 'DATA-403'
       });
     }
 
     if (!customer?.firstName || !customer?.lastName || !customer?.email || !customer?.phone) {
       return res.status(400).json({
         error: 'Customer information required',
-        code: ERROR_CODES.DATA_INVALID
+        code: 'DATA-403'
       });
     }
 
@@ -194,14 +334,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!validateEmail(customer.email)) {
       return res.status(400).json({
         error: 'Invalid email address',
-        code: ERROR_CODES.DATA_INVALID
+        code: 'DATA-403'
       });
     }
 
     if (!validatePhone(customer.phone)) {
       return res.status(400).json({
         error: 'Invalid phone number',
-        code: ERROR_CODES.DATA_INVALID
+        code: 'DATA-403'
       });
     }
 
@@ -210,7 +350,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!itemsValidation.valid) {
       return res.status(400).json({
         error: itemsValidation.error,
-        code: ERROR_CODES.DATA_INVALID
+        code: 'DATA-403'
       });
     }
 
@@ -219,7 +359,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (calculatedTotal > MAX_ORDER_TOTAL) {
       return res.status(400).json({
         error: `Order total cannot exceed $${MAX_ORDER_TOTAL}`,
-        code: ERROR_CODES.DATA_INVALID
+        code: 'DATA-403'
       });
     }
 
@@ -261,7 +401,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!slotRow) {
       return res.status(400).json({
         error: 'Bake slot not found',
-        code: ERROR_CODES.ORD_SLOT_CLOSED
+        code: 'ORD-SLOT_CLOSED'
       });
     }
 
@@ -273,7 +413,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (currentOrders + orderQuantity > totalCapacity) {
       return res.status(400).json({
         error: 'Not enough capacity for this order',
-        code: ERROR_CODES.ORD_CAPACITY
+        code: 'ORD-106'
       });
     }
 
@@ -374,7 +514,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(500).json({
       error: 'Failed to submit order',
       details: error instanceof Error ? error.message : 'Unknown error',
-      code: ERROR_CODES.ORD_GENERAL
+      code: 'ORD-001'
     });
   }
 }
