@@ -204,4 +204,39 @@ ShaneStephanieBakery/
 
 ---
 
-*Last updated: 2026-01-05*
+## Postmortems
+
+### 2026-01-26: First Formal Review (Post-Delivery)
+
+**Trigger:** First postmortem for an active client project
+
+**What happened:**
+- Delivered desktop + web order system in ~3 days (2026-01-03 to 2026-01-05)
+- Owners provided feedback on 2026-01-09 identifying 6+ issues
+- Most issues fixed in sessions 95-96
+- Production tab overhaul still pending owner clarification
+
+**What went well:**
+- Rapid initial delivery with comprehensive feature set
+- Strong documentation (ARCHITECTURE.md, PROJECT_STATUS.md, UPDATE_INSTRUCTIONS.md)
+- Good remote support infrastructure (TeamViewer + email handoff)
+- Owner feedback captured in upgrade session log (UPGRADE_v2)
+- Responsive fixes - 6 owner-reported issues addressed quickly
+
+**What went wrong:**
+- Payment options bug: Order form read from Vercel env vars instead of synced settings (missed in testing)
+- Production tab: Requirements not fully gathered - "Bake Slot" terminology doesn't match owners' mental model
+- Unit conversion incomplete: ALLOWED_RECIPE_FIELDS missing several fields (bakeTemp, times, instructions)
+- No automated tests: Time pressure during build, zero test coverage
+
+**What we changed:**
+- Added Pre-Delivery Testing checklist to documentation.md (guardrail to catch settings sync issues)
+- upgrade-sessions.md rule was already added after lost session plan
+
+**Outstanding items:**
+- Tasks #18-19: Complete unit conversion implementation (add missing fields to whitelist, verify persistence)
+- Production tab: Awaiting owner clarification on desired workflow
+
+---
+
+*Last updated: 2026-01-26*
