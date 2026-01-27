@@ -1,6 +1,149 @@
-# Update Instructions for Covenant Acres Farmstand
+# Covenant Acres Farmstand - Update Instructions
 
-## For Developers: Creating a New Release
+---
+
+# For Bakery Owners: Installing v1.1.0
+
+## Before You Start
+
+- Close the Farmstand app if it's running
+- Make sure you have internet connection
+- This update will take about 5-10 minutes
+
+---
+
+## Step 1: Backup Your Database (IMPORTANT)
+
+1. Press `Win + R` on your keyboard
+2. Type `%APPDATA%` and press Enter
+3. Find the folder named **`covenant acres`**
+4. **Right-click** the folder → **Copy**
+5. Go to your Desktop → **Right-click** → **Paste**
+6. You now have a backup on your Desktop
+
+---
+
+## Step 2: Open Command Prompt
+
+1. Press the **Windows key** on your keyboard
+2. Type `cmd`
+3. Click on **Command Prompt** to open it
+
+---
+
+## Step 3: Navigate to the App Folder
+
+Copy and paste this command, then press **Enter**:
+
+```
+cd C:\Users\Shane\covenant-acres-farmstand\desktop-app
+```
+
+> **Note:** If your folder is in a different location, adjust the path accordingly.
+
+---
+
+## Step 4: Download the Update
+
+Copy and paste this command, then press **Enter**:
+
+```
+git pull origin master
+```
+
+You should see a message showing files being updated.
+
+---
+
+## Step 5: Install Dependencies
+
+Copy and paste this command, then press **Enter**:
+
+```
+npm install
+```
+
+Wait for it to finish. You'll see text scrolling - this is normal.
+
+---
+
+## Step 6: Build the App
+
+Copy and paste this command, then press **Enter**:
+
+```
+npm run build
+```
+
+Wait for it to finish (1-2 minutes).
+
+---
+
+## Step 7: Start the App
+
+Copy and paste this command, then press **Enter**:
+
+```
+npm start
+```
+
+The app will open. The database automatically updates with new features.
+
+---
+
+## What's New in v1.1.0
+
+### Major Features
+- **Redesigned Prep Sheet** - Now has draft/complete workflow
+- **New Production Tab** - Tracks all loaves after baking
+- **Multiple Loaf Sizes** - Customers can choose small or large
+- **Customer Profiles** - Click a customer to see full history
+- **Help & Guides** - New section in Settings explains everything
+
+### Improvements
+- Drag-and-drop to reorder ingredients in recipes
+- "Bake Slot" renamed to "Pickup Slot" for clarity
+- Better cost calculations with density support
+
+### Bug Fixes
+- Payment options now show your configured accounts
+- Activity Log no longer causes blank screen
+- Adding ingredients no longer freezes the screen
+
+---
+
+## Troubleshooting
+
+### "git is not recognized"
+Git isn't installed. Contact Sam for help.
+
+### "npm is not recognized"
+Node.js isn't installed. Contact Sam for help.
+
+### Build errors or red text
+Try running these commands in order:
+```
+npm cache clean --force
+npm install
+npm run build
+```
+
+### App won't start
+Make sure no other instance is running. Check Task Manager (Ctrl+Shift+Esc) and end any "Covenant Acres" or "Electron" processes.
+
+### Something else went wrong
+Take a screenshot of the error and send it to Sam.
+
+---
+
+## Need Help?
+
+Contact Sam if you run into any issues.
+
+---
+---
+
+# For Developers: Creating a New Release
 
 ### 1. Build the new version
 ```bash
@@ -11,17 +154,17 @@ npm run package
 ### 2. Create the zip file
 ```bash
 cd dist-electron
-rm -f Covenant-Acres-Farmstand-v1.0.X.zip
+rm -f Covenant-Acres-Farmstand-vX.X.X.zip
 cd win-unpacked
-powershell Compress-Archive -Path '*' -DestinationPath '../Covenant-Acres-Farmstand-v1.0.X.zip' -Force
+powershell Compress-Archive -Path '*' -DestinationPath '../Covenant-Acres-Farmstand-vX.X.X.zip' -Force
 ```
 
 ### 3. Create GitHub release
 ```bash
-gh release create v1.0.X \
-  --title "Covenant Acres Farmstand v1.0.X" \
+gh release create vX.X.X \
+  --title "Covenant Acres Farmstand vX.X.X" \
   --notes "Release notes here" \
-  desktop-app/dist-electron/Covenant-Acres-Farmstand-v1.0.X.zip
+  desktop-app/dist-electron/Covenant-Acres-Farmstand-vX.X.X.zip
 ```
 
 ### 4. Make repo public temporarily (if private)
@@ -33,50 +176,6 @@ gh repo edit --visibility public --accept-visibility-change-consequences
 ```bash
 gh repo edit --visibility private --accept-visibility-change-consequences
 ```
-
----
-
-## For Bakery Owners: Installing an Update
-
-### Part 1: Backup Your Current Version (DO THIS FIRST)
-
-**Step 1: Backup the database**
-1. Press `Win + R` on your keyboard
-2. Type `%APPDATA%` and press Enter
-3. Find the folder named **`covenant acres`**
-   - To confirm it's the right folder, open it and look for `covenant-acres.db`
-4. **Right-click** the folder → **Copy**
-5. Go to your Desktop → **Right-click** → **Paste**
-6. You now have a backup on your Desktop
-
-**Step 2: Keep your current app folder**
-- Don't delete your current app folder (e.g., `C:\Covenant Acres Bakery\`)
-- Just leave it alone - we're installing the new version in a different location
-
----
-
-### Part 2: Download the New Version
-
-1. Go to the releases page (URL will be provided)
-2. Click the `.zip` file to download (e.g., `Covenant-Acres-Farmstand-v1.0.X.zip`)
-3. Create a new folder: `C:\Covenant Acres Bakery vX.X.X\`
-4. Extract the zip contents into that new folder
-5. Run **Covenant Acres Farmstand.exe** from the new folder
-
----
-
-### Part 3: Verify Your Data
-
-When you open the new version, check that:
-- [ ] Your orders are still there
-- [ ] Your customers are still there
-- [ ] Your flavors and recipes are still there
-- [ ] Your production logs are still there
-- [ ] Your locations are there
-
-**If everything looks good:** You can delete the old app folder and desktop backup.
-
-**If anything is missing:** Close the new version and contact support. Your old version and backup are untouched.
 
 ---
 
