@@ -98,6 +98,7 @@ interface FlavorRow {
 interface Size {
   name: string;
   price: number;
+  is_active?: boolean;
 }
 
 function parseRows<T>(rows: string[][]): T[] {
@@ -156,18 +157,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .map(flavor => {
         let sizes: Size[] = [];
         try {
-          sizes = JSON.parse(flavor.sizes || '[]');
+          const parsedSizes: Size[] = JSON.parse(flavor.sizes || '[]');
+          // Filter to only active sizes (default to active if is_active not set)
+          sizes = parsedSizes.filter(s => s.is_active !== false);
         } catch {
           sizes = [{ name: 'Regular', price: 10 }]; // Default fallback
+        }
+
+        // Skip flavors with no active sizes
+        if (sizes.length === 0) {
+          return null;
         }
 
         return {
           id: flavor.id,
           name: flavor.name,
           description: flavor.description,
-          sizes,
+          sizes: sizes.map(s => ({ name: s.name, price: s.price })), // Remove is_active from response
         };
       })
+      .filter((flavor): flavor is NonNullable<typeof flavor> => flavor !== null)
       .sort((a, b) => parseInt(flavors.find(f => f.id === a.id)?.sort_order || '999')
                     - parseInt(flavors.find(f => f.id === b.id)?.sort_order || '999'));
 

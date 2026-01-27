@@ -317,6 +317,51 @@ export async function initDatabase(): Promise<void> {
       UNIQUE(bake_slot_id, location_id)
     );
 
+    -- Prep Sheets (track bake day planning with draft/complete workflow)
+    CREATE TABLE IF NOT EXISTS prep_sheets (
+      id TEXT PRIMARY KEY,
+      bake_date TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'draft',
+      notes TEXT,
+      completed_at TEXT,
+      completed_by TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (completed_by) REFERENCES admin_users(id)
+    );
+
+    -- Prep Sheet Items (line items on a prep sheet - both from orders and extras)
+    CREATE TABLE IF NOT EXISTS prep_sheet_items (
+      id TEXT PRIMARY KEY,
+      prep_sheet_id TEXT NOT NULL,
+      order_id TEXT,
+      flavor_id TEXT NOT NULL,
+      planned_quantity INTEGER NOT NULL,
+      actual_quantity INTEGER,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (prep_sheet_id) REFERENCES prep_sheets(id) ON DELETE CASCADE,
+      FOREIGN KEY (order_id) REFERENCES orders(id),
+      FOREIGN KEY (flavor_id) REFERENCES flavors(id)
+    );
+
+    -- Production (tracks individual loaf line items after baking)
+    CREATE TABLE IF NOT EXISTS production (
+      id TEXT PRIMARY KEY,
+      prep_sheet_id TEXT NOT NULL,
+      order_id TEXT,
+      flavor_id TEXT NOT NULL,
+      quantity INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      sale_price REAL,
+      notes TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (prep_sheet_id) REFERENCES prep_sheets(id),
+      FOREIGN KEY (order_id) REFERENCES orders(id),
+      FOREIGN KEY (flavor_id) REFERENCES flavors(id)
+    );
+
     -- Indexes
     CREATE INDEX IF NOT EXISTS idx_orders_bake_slot ON orders(bake_slot_id);
     CREATE INDEX IF NOT EXISTS idx_orders_customer ON orders(customer_id);
@@ -331,6 +376,15 @@ export async function initDatabase(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_extra_production_flavor ON extra_production(flavor_id);
     CREATE INDEX IF NOT EXISTS idx_bake_slot_locations_slot ON bake_slot_locations(bake_slot_id);
     CREATE INDEX IF NOT EXISTS idx_bake_slot_locations_location ON bake_slot_locations(location_id);
+    CREATE INDEX IF NOT EXISTS idx_prep_sheets_bake_date ON prep_sheets(bake_date);
+    CREATE INDEX IF NOT EXISTS idx_prep_sheets_status ON prep_sheets(status);
+    CREATE INDEX IF NOT EXISTS idx_prep_sheet_items_prep_sheet ON prep_sheet_items(prep_sheet_id);
+    CREATE INDEX IF NOT EXISTS idx_prep_sheet_items_order ON prep_sheet_items(order_id);
+    CREATE INDEX IF NOT EXISTS idx_prep_sheet_items_flavor ON prep_sheet_items(flavor_id);
+    CREATE INDEX IF NOT EXISTS idx_production_prep_sheet ON production(prep_sheet_id);
+    CREATE INDEX IF NOT EXISTS idx_production_order ON production(order_id);
+    CREATE INDEX IF NOT EXISTS idx_production_flavor ON production(flavor_id);
+    CREATE INDEX IF NOT EXISTS idx_production_status ON production(status);
   `);
 
   // Migrations for admin_users table
@@ -456,6 +510,12 @@ export async function initDatabase(): Promise<void> {
   }
   if (densitiesUpdated > 0) {
     log('info', `Populated missing density values for ${densitiesUpdated} ingredients`);
+  }
+
+  // Migration for contents_size (for package types like cans, jars)
+  if (!ingredientColumns.some(col => col.name === 'contents_size')) {
+    db.exec("ALTER TABLE ingredients ADD COLUMN contents_size REAL DEFAULT 0");
+    log('info', 'Added contents_size column to ingredients');
   }
 
   // Migrations for settings table - payment links

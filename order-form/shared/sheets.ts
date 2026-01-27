@@ -18,4 +18,5 @@ export const SHEETS = {
   INGREDIENTS: 'Ingredients',
   RECIPE_INGREDIENTS: 'RecipeIngredients',
   OVERHEAD_SETTINGS: 'OverheadSettings',
+  PUBLIC_SETTINGS: 'PublicSettings',
 } as const;

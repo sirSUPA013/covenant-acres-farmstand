@@ -235,7 +235,48 @@ ShaneStephanieBakery/
 
 **Outstanding items:**
 - Tasks #18-19: Complete unit conversion implementation (add missing fields to whitelist, verify persistence)
-- Production tab: Awaiting owner clarification on desired workflow
+- Production tab: In progress (see below)
+
+---
+
+## Active Work: Production Tab & Prep Sheet Overhaul
+
+### Summary
+Transform the Production tab from "extra production logging" to "all loaves tracking" and redesign the Prep Sheet as an interactive planning tool with draft/complete workflow.
+
+### New Database Schema
+Three new tables added to database.ts:
+- `prep_sheets` - Tracks bake day planning with draft/completed status
+- `prep_sheet_items` - Line items on a prep sheet (orders + extras)
+- `production` - Tracks individual loaf line items after baking
+
+### Implementation Progress
+
+| Phase | Description | Status |
+|-------|-------------|--------|
+| 1 | Database schema + terminology | ✅ Complete |
+| 2 | IPC handlers | ✅ Complete |
+| 3 | Preload.ts APIs | ✅ Complete |
+| 4 | PrepSheetPage redesign | ✅ Complete |
+| 5 | ProductionPage redesign | ✅ Complete |
+| 6 | OrdersPage updates | ✅ Complete |
+| 7 | Terminology rename | ✅ Complete |
+
+### Key Changes Implemented
+- **New order statuses**: `scheduled` (on prep sheet), `baked` (prep sheet completed)
+- **Prep sheet workflow**: draft → select orders → add extras → mark complete → creates production records
+- **Production tab**: Groups loaves by order, shows payment at order level, status per line item
+- **Split functionality**: Can split line items (e.g., 3 loaves → 2 picked_up + 1 wasted)
+- **Payment moved**: Payment editing moved from Orders to Production tab (read-only badge in Orders)
+- **Terminology**: UI already used "Pickup Day" in most places; minimal changes needed
+
+### Remaining Work
+- **Testing**: Full end-to-end testing of the new workflow needed
+- **Owner review**: Confirm the workflow matches their expectations
+
+### Open Questions (for owner)
+1. Bake instructions format: What should the step-by-step look like for multiple flavors?
+2. Confirm line item statuses: pending, picked_up, sold, wasted, personal, gifted
 
 ---
 

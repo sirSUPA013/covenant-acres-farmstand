@@ -48,7 +48,7 @@ async function createWindow(): Promise<void> {
   if (isDev) {
     const devServerUrl = process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173';
     await mainWindow.loadURL(devServerUrl);
-    mainWindow.webContents.openDevTools();
+    // Dev tools available via F12 or View menu, but don't auto-open
   } else {
     await mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
   }

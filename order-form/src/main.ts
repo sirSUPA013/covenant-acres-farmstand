@@ -145,7 +145,7 @@ async function loadBakeSlots(): Promise<void> {
     if (state.availableSlots.length === 0) {
       slotsContainer.innerHTML = `
         <div class="no-slots">
-          <p>No bake days are currently available at ${state.selectedLocation.name}.</p>
+          <p>No pickup days are currently available at ${state.selectedLocation.name}.</p>
           <p>Check back soon or try a different location!</p>
         </div>
       `;

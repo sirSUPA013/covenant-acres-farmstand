@@ -20,6 +20,8 @@ contextBridge.exposeInMainWorld('api', {
   updateCustomer: (id: string, data: object) => ipcRenderer.invoke('customers:update', id, data),
   issueCredit: (id: string, amount: number, reason: string) =>
     ipcRenderer.invoke('customers:issueCredit', id, amount, reason),
+  getCustomerOrders: (customerId: string) => ipcRenderer.invoke('customers:getOrders', customerId),
+  getCustomerCreditHistory: (customerId: string) => ipcRenderer.invoke('customers:getCreditHistory', customerId),
 
   // Bake Slots
   getBakeSlots: (filters?: object) => ipcRenderer.invoke('bakeSlots:getAll', filters),
@@ -116,13 +118,46 @@ contextBridge.exposeInMainWorld('api', {
   // Audit Log
   getAuditLog: (filters?: object) => ipcRenderer.invoke('audit:getLog', filters),
 
-  // Extra Production
+  // Extra Production (legacy - kept for backwards compatibility)
   getExtraProduction: (filters?: object) => ipcRenderer.invoke('extraProduction:getAll', filters),
   createExtraProduction: (data: object) => ipcRenderer.invoke('extraProduction:create', data),
   updateExtraProduction: (id: string, data: object) => ipcRenderer.invoke('extraProduction:update', id, data),
   deleteExtraProduction: (id: string) => ipcRenderer.invoke('extraProduction:delete', id),
   getOpenCapacity: (bakeSlotId: string) => ipcRenderer.invoke('extraProduction:getOpenCapacity', bakeSlotId),
   getExtraProductionAnalytics: (filters?: object) => ipcRenderer.invoke('extraProduction:getAnalytics', filters),
+
+  // Prep Sheets (new workflow)
+  getPrepSheets: (filters?: object) => ipcRenderer.invoke('prepSheets:getAll', filters),
+  getPrepSheet2: (id: string) => ipcRenderer.invoke('prepSheets:get', id),
+  createPrepSheet: (data: object) => ipcRenderer.invoke('prepSheets:create', data),
+  updatePrepSheet: (id: string, data: object) => ipcRenderer.invoke('prepSheets:update', id, data),
+  deletePrepSheet: (id: string) => ipcRenderer.invoke('prepSheets:delete', id),
+  addOrderToPrepSheet: (prepSheetId: string, orderId: string) =>
+    ipcRenderer.invoke('prepSheets:addOrder', prepSheetId, orderId),
+  removeOrderFromPrepSheet: (prepSheetId: string, orderId: string) =>
+    ipcRenderer.invoke('prepSheets:removeOrder', prepSheetId, orderId),
+  addExtraToPrepSheet: (prepSheetId: string, flavorId: string, quantity: number) =>
+    ipcRenderer.invoke('prepSheets:addExtra', prepSheetId, flavorId, quantity),
+  removeExtraFromPrepSheet: (itemId: string) =>
+    ipcRenderer.invoke('prepSheets:removeExtra', itemId),
+  updateExtraOnPrepSheet: (itemId: string, quantity: number) =>
+    ipcRenderer.invoke('prepSheets:updateExtra', itemId, quantity),
+  getAvailableOrdersForPrepSheet: (bakeDate: string) =>
+    ipcRenderer.invoke('prepSheets:getAvailableOrders', bakeDate),
+  completePrepSheet: (prepSheetId: string, actualQuantities?: object) =>
+    ipcRenderer.invoke('prepSheets:complete', prepSheetId, actualQuantities),
+  generatePrepSheetData: (prepSheetId: string) =>
+    ipcRenderer.invoke('prepSheets:generateData', prepSheetId),
+
+  // Production (loaf tracking after baking)
+  getProduction: (filters?: object) => ipcRenderer.invoke('production:getAll', filters),
+  getProductionRecord: (id: string) => ipcRenderer.invoke('production:get', id),
+  updateProduction: (id: string, data: object) => ipcRenderer.invoke('production:update', id, data),
+  splitProduction: (id: string, splitQuantity: number, newStatus: string) =>
+    ipcRenderer.invoke('production:split', id, splitQuantity, newStatus),
+  updateOrderPaymentFromProduction: (orderId: string, paymentStatus: string, paymentMethod?: string) =>
+    ipcRenderer.invoke('production:updateOrderPayment', orderId, paymentStatus, paymentMethod),
+  getProductionAnalytics: (filters?: object) => ipcRenderer.invoke('production:getAnalytics', filters),
 
   // System
   sendErrorReport: () => ipcRenderer.invoke('system:sendErrorReport'),
@@ -157,6 +192,8 @@ declare global {
       getCustomer: (id: string) => Promise<unknown>;
       updateCustomer: (id: string, data: object) => Promise<void>;
       issueCredit: (id: string, amount: number, reason: string) => Promise<void>;
+      getCustomerOrders: (customerId: string) => Promise<unknown[]>;
+      getCustomerCreditHistory: (customerId: string) => Promise<unknown[]>;
 
       getBakeSlots: (filters?: object) => Promise<unknown[]>;
       getBakeSlotsByLocation: (locationId: string) => Promise<unknown[]>;
@@ -263,6 +300,91 @@ declare global {
         gifted: { count: number; loaves: number; cost: number };
         wasted: { count: number; loaves: number; cost: number };
         personal: { count: number; loaves: number };
+      }>;
+
+      // Prep Sheets (new workflow)
+      getPrepSheets: (filters?: object) => Promise<unknown[]>;
+      getPrepSheet2: (id: string) => Promise<{
+        id: string;
+        bake_date: string;
+        status: string;
+        notes: string | null;
+        completed_at: string | null;
+        completed_by_name: string | null;
+        items: Array<{
+          id: string;
+          order_id: string | null;
+          flavor_id: string;
+          flavor_name: string;
+          planned_quantity: number;
+          actual_quantity: number | null;
+          first_name?: string;
+          last_name?: string;
+          email?: string;
+        }>;
+      } | null>;
+      createPrepSheet: (data: object) => Promise<{ id: string }>;
+      updatePrepSheet: (id: string, data: object) => Promise<void>;
+      deletePrepSheet: (id: string) => Promise<{ success: boolean }>;
+      addOrderToPrepSheet: (prepSheetId: string, orderId: string) => Promise<void>;
+      removeOrderFromPrepSheet: (prepSheetId: string, orderId: string) => Promise<void>;
+      addExtraToPrepSheet: (prepSheetId: string, flavorId: string, quantity: number) => Promise<{ id: string }>;
+      removeExtraFromPrepSheet: (itemId: string) => Promise<void>;
+      updateExtraOnPrepSheet: (itemId: string, quantity: number) => Promise<void>;
+      getAvailableOrdersForPrepSheet: (bakeDate: string) => Promise<unknown[]>;
+      completePrepSheet: (prepSheetId: string, actualQuantities?: object) => Promise<{ success: boolean }>;
+      generatePrepSheetData: (prepSheetId: string) => Promise<{
+        prepSheetId: string;
+        bakeDate: string;
+        status: string;
+        generatedAt: string;
+        items: Array<{
+          flavorId: string;
+          flavorName: string;
+          quantity: number;
+          baseIngredients: Array<{ name: string; totalQuantity: number; unit: string }>;
+          foldIngredients: Array<{ name: string; totalQuantity: number; unit: string }>;
+          laminationIngredients: Array<{ name: string; totalQuantity: number; unit: string }>;
+          steps: string[];
+          prepInstructions?: string;
+          bakeInstructions?: string;
+          bakeTemp?: string;
+          prepTimeMinutes?: number;
+          bakeTimeMinutes?: number;
+          noRecipe?: boolean;
+        }>;
+        totalLoaves: number;
+      }>;
+
+      // Production (loaf tracking after baking)
+      getProduction: (filters?: object) => Promise<Array<{
+        id: string;
+        prep_sheet_id: string;
+        order_id: string | null;
+        flavor_id: string;
+        flavor_name: string;
+        quantity: number;
+        status: string;
+        sale_price: number | null;
+        notes: string | null;
+        bake_date: string;
+        first_name?: string;
+        last_name?: string;
+        email?: string;
+        payment_status?: string;
+        payment_method?: string;
+        total_amount?: number;
+      }>>;
+      getProductionRecord: (id: string) => Promise<unknown>;
+      updateProduction: (id: string, data: object) => Promise<void>;
+      splitProduction: (id: string, splitQuantity: number, newStatus: string) => Promise<{
+        newId: string;
+        originalQuantity: number;
+      }>;
+      updateOrderPaymentFromProduction: (orderId: string, paymentStatus: string, paymentMethod?: string) => Promise<void>;
+      getProductionAnalytics: (filters?: object) => Promise<{
+        byStatus: Array<{ status: string; record_count: number; total_loaves: number; revenue: number }>;
+        bySource: Array<{ source: string; total_loaves: number }>;
       }>;
 
       sendErrorReport: () => Promise<void>;

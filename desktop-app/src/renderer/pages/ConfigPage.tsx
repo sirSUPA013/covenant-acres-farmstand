@@ -16,6 +16,7 @@ interface BakeSlot {
 interface FlavorSize {
   name: string;
   price: number;
+  is_active: boolean;
 }
 
 interface Flavor {
@@ -48,9 +49,11 @@ interface Ingredient {
   package_price: number;
   package_size: number;
   package_unit: string;
+  contents_size: number;
   cost_per_unit: number;
   vendor: string;
   category: string;
+  density_g_per_ml?: number;
 }
 
 function ConfigPage() {
@@ -89,9 +92,16 @@ function ConfigPage() {
     package_price: 0,
     package_size: 0,
     package_unit: '',
+    contents_size: 0, // Amount in each package (for package types like can, jar)
     vendor: '',
     category: 'base',
+    density_grams: null as number | null, // For weight↔volume conversion
+    density_measure: 'tsp' as 'tsp' | 'tbsp' | 'cup', // Which volume measure they used
   });
+
+  // Package types that require contents fields
+  const PACKAGE_TYPES = ['can', 'jar', 'bag', 'box', 'bottle', 'pack', 'each'];
+  const isPackageType = PACKAGE_TYPES.includes(ingredientForm.package_unit);
   const [ingredientSaving, setIngredientSaving] = useState(false);
   const [ingredientSuccess, setIngredientSuccess] = useState<string | null>(null);
 
@@ -125,7 +135,7 @@ function ConfigPage() {
   const [flavorForm, setFlavorForm] = useState({
     name: '',
     description: '',
-    sizes: [{ name: 'Regular', price: 10 }] as FlavorSize[],
+    sizes: [{ name: 'Regular', price: 10, is_active: true }] as FlavorSize[],
     season: 'year_round',
   });
 
@@ -182,14 +192,22 @@ function ConfigPage() {
   function openIngredientModal(ingredient?: Ingredient) {
     if (ingredient) {
       setEditingIngredient(ingredient);
+      // Convert density (g/ml) back to grams per teaspoon for display
+      // 1 tsp = 4.92892 ml, so g/ml × 4.92892 = g/tsp
+      const gramsPerTsp = ingredient.density_g_per_ml
+        ? ingredient.density_g_per_ml * 4.92892
+        : null;
       setIngredientForm({
         name: ingredient.name,
         unit: ingredient.unit,
         package_price: ingredient.package_price,
         package_size: ingredient.package_size,
         package_unit: ingredient.package_unit || '',
+        contents_size: ingredient.contents_size || 0,
         vendor: ingredient.vendor || '',
         category: ingredient.category || 'base',
+        density_grams: gramsPerTsp ? Math.round(gramsPerTsp * 10) / 10 : null, // Round to 1 decimal
+        density_measure: 'tsp', // Default to tsp when editing
       });
     } else {
       setEditingIngredient(null);
@@ -199,8 +217,11 @@ function ConfigPage() {
         package_price: 0,
         package_size: 0,
         package_unit: '',
+        contents_size: 0,
         vendor: '',
         category: 'base',
+        density_grams: null,
+        density_measure: 'tsp',
       });
     }
     setShowIngredientModal(true);
@@ -227,33 +248,52 @@ function ConfigPage() {
       setIngredientSuccess('Please enter a valid package price (greater than 0).');
       return;
     }
+    // If package type selected, contents_size is required
+    if (isPackageType && ingredientForm.contents_size <= 0) {
+      setIngredientSuccess('Please enter the contents amount (e.g., how many oz in each can).');
+      return;
+    }
 
     setIngredientSaving(true);
     setIngredientSuccess(null);
+
+    // For weight/volume packages, auto-set unit to match package_unit
+    const effectiveUnit = isPackageType ? ingredientForm.unit : ingredientForm.package_unit;
+
+    // Convert grams per measure to density (g/ml)
+    // 1 tsp = 4.92892 ml, 1 tbsp = 14.7868 ml, 1 cup = 236.588 ml
+    const mlPerMeasure: Record<string, number> = { tsp: 4.92892, tbsp: 14.7868, cup: 236.588 };
+    const density = ingredientForm.density_grams
+      ? ingredientForm.density_grams / mlPerMeasure[ingredientForm.density_measure]
+      : null;
 
     try {
       if (editingIngredient) {
         await window.api.updateIngredient(editingIngredient.id, {
           name: ingredientForm.name,
-          unit: ingredientForm.unit,
+          unit: effectiveUnit,
           packagePrice: ingredientForm.package_price,
           packageSize: ingredientForm.package_size,
           packageUnit: ingredientForm.package_unit,
+          contentsSize: isPackageType ? ingredientForm.contents_size : 0,
           vendor: ingredientForm.vendor,
           category: ingredientForm.category,
+          density: density,
         });
-        setIngredientSuccess(`"$\{ingredientName}" has been updated.`);
+        setIngredientSuccess(`"${ingredientForm.name}" has been updated.`);
       } else {
         await window.api.createIngredient({
           name: ingredientForm.name,
-          unit: ingredientForm.unit,
+          unit: effectiveUnit,
           packagePrice: ingredientForm.package_price,
           packageSize: ingredientForm.package_size,
           packageUnit: ingredientForm.package_unit,
+          contentsSize: isPackageType ? ingredientForm.contents_size : 0,
           vendor: ingredientForm.vendor,
           category: ingredientForm.category,
+          density: density,
         });
-        setIngredientSuccess(`"$\{ingredientName}" has been added to your ingredient library.`);
+        setIngredientSuccess(`"${ingredientForm.name}" has been added to your ingredient library.`);
       }
       // Auto-close after showing success briefly
       setTimeout(() => {
@@ -422,9 +462,15 @@ function ConfigPage() {
       setEditingFlavor(flavor);
       let sizes: FlavorSize[] = [];
       try {
-        sizes = JSON.parse(flavor.sizes);
+        const parsed = JSON.parse(flavor.sizes);
+        // Migrate sizes without is_active (default to true)
+        sizes = parsed.map((s: { name: string; price: number; is_active?: boolean }) => ({
+          name: s.name,
+          price: s.price,
+          is_active: s.is_active !== undefined ? s.is_active : true,
+        }));
       } catch {
-        sizes = [{ name: 'Regular', price: 10 }];
+        sizes = [{ name: 'Regular', price: 10, is_active: true }];
       }
       setFlavorForm({
         name: flavor.name,
@@ -437,7 +483,7 @@ function ConfigPage() {
       setFlavorForm({
         name: '',
         description: '',
-        sizes: [{ name: 'Regular', price: 10 }],
+        sizes: [{ name: 'Regular', price: 10, is_active: true }],
         season: 'year_round',
       });
     }
@@ -502,7 +548,7 @@ function ConfigPage() {
   function addSize() {
     setFlavorForm({
       ...flavorForm,
-      sizes: [...flavorForm.sizes, { name: '', price: 0 }],
+      sizes: [...flavorForm.sizes, { name: '', price: 0, is_active: true }],
     });
   }
 
@@ -514,7 +560,7 @@ function ConfigPage() {
     });
   }
 
-  function updateSize(index: number, field: 'name' | 'price', value: string | number) {
+  function updateSize(index: number, field: 'name' | 'price' | 'is_active', value: string | number | boolean) {
     const newSizes = [...flavorForm.sizes];
     newSizes[index] = { ...newSizes[index], [field]: value };
     setFlavorForm({ ...flavorForm, sizes: newSizes });
@@ -531,7 +577,14 @@ function ConfigPage() {
   function parseSizes(sizesJson: string) {
     try {
       const sizes = JSON.parse(sizesJson);
-      return sizes.map((s: { name: string; price: number }) => `${s.name}: $${s.price}`).join(', ');
+      return sizes.map((s: { name: string; price: number; is_active?: boolean }) => {
+        const label = `${s.name}: $${s.price}`;
+        // Mark inactive sizes
+        if (s.is_active === false) {
+          return `(${label})`;
+        }
+        return label;
+      }).join(', ');
     } catch {
       return '-';
     }
@@ -1067,7 +1120,11 @@ function ConfigPage() {
                         <td style={{ fontFamily: 'monospace', fontSize: '0.9rem' }}>
                           {formatCostPerUnit(ing.cost_per_unit, ing.unit)}
                         </td>
-                        <td>{ing.package_unit || `${ing.package_size} ${ing.unit}`}</td>
+                        <td>
+                          {ing.contents_size > 0
+                            ? `${ing.package_size} ${ing.package_unit} × ${ing.contents_size} ${ing.unit}`
+                            : `${ing.package_size} ${ing.package_unit || ing.unit}`}
+                        </td>
                         <td>${ing.package_price.toFixed(2)}</td>
                         <td>{ing.vendor || '-'}</td>
                         <td style={{ textTransform: 'capitalize' }}>{ing.category}</td>
@@ -1234,17 +1291,36 @@ function ConfigPage() {
 
               <div className="form-group">
                 <label className="form-label">Sizes & Prices</label>
+                <p style={{ fontSize: '0.8rem', color: '#666', marginBottom: '12px' }}>
+                  Toggle the checkbox to show/hide each size on the order form.
+                </p>
                 {flavorForm.sizes.map((size, index) => (
                   <div key={index} style={{ display: 'flex', gap: '8px', marginBottom: '8px', alignItems: 'center' }}>
+                    <label
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        cursor: 'pointer',
+                        padding: '4px',
+                      }}
+                      title={size.is_active ? 'Visible to customers' : 'Hidden from customers'}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={size.is_active}
+                        onChange={(e) => updateSize(index, 'is_active', e.target.checked)}
+                        style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+                      />
+                    </label>
                     <input
                       type="text"
                       className="form-input"
                       value={size.name}
                       onChange={(e) => updateSize(index, 'name', e.target.value)}
                       placeholder="Size name"
-                      style={{ flex: 2 }}
+                      style={{ flex: 2, opacity: size.is_active ? 1 : 0.5 }}
                     />
-                    <div style={{ display: 'flex', alignItems: 'center', flex: 1 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', flex: 1, opacity: size.is_active ? 1 : 0.5 }}>
                       <span style={{ marginRight: '4px' }}>$</span>
                       <input
                         type="number"
@@ -1362,31 +1438,16 @@ function ConfigPage() {
                   Enter how much you paid and how much you got. Cost per unit will be calculated automatically.
                 </p>
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                  <div className="form-group">
-                    <label className="form-label">Package Price *</label>
-                    <div style={{ display: 'flex', alignItems: 'center' }}>
-                      <span style={{ marginRight: '4px' }}>$</span>
-                      <input
-                        type="number"
-                        className="form-input"
-                        value={ingredientForm.package_price || ''}
-                        onChange={(e) => setIngredientForm({ ...ingredientForm, package_price: parseFloat(e.target.value) || 0 })}
-                        placeholder="18.71"
-                        min="0"
-                        step="0.01"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="form-group">
-                    <label className="form-label">Package Size *</label>
+                <div className="form-group">
+                  <label className="form-label">Package Price *</label>
+                  <div style={{ display: 'flex', alignItems: 'center' }}>
+                    <span style={{ marginRight: '4px' }}>$</span>
                     <input
                       type="number"
                       className="form-input"
-                      value={ingredientForm.package_size || ''}
-                      onChange={(e) => setIngredientForm({ ...ingredientForm, package_size: parseFloat(e.target.value) || 0 })}
-                      placeholder="9072"
+                      value={ingredientForm.package_price || ''}
+                      onChange={(e) => setIngredientForm({ ...ingredientForm, package_price: parseFloat(e.target.value) || 0 })}
+                      placeholder="18.71"
                       min="0"
                       step="0.01"
                     />
@@ -1394,42 +1455,165 @@ function ConfigPage() {
                 </div>
 
                 <div className="form-group">
-                  <label className="form-label">Unit</label>
-                  <select
-                    className="form-select"
-                    value={ingredientForm.unit}
-                    onChange={(e) => setIngredientForm({ ...ingredientForm, unit: e.target.value })}
-                    style={{ maxWidth: '200px' }}
-                  >
-                    <optgroup label="Weight">
-                      <option value="g">g (grams)</option>
-                      <option value="oz">oz (ounces)</option>
-                      <option value="lbs">lbs (pounds)</option>
-                      <option value="kg">kg (kilograms)</option>
-                    </optgroup>
-                    <optgroup label="Volume">
-                      <option value="ml">ml (milliliters)</option>
-                      <option value="tsp">tsp (teaspoon)</option>
-                      <option value="tbsp">tbsp (tablespoon)</option>
-                      <option value="cup">cup</option>
-                      <option value="fl oz">fl oz (fluid ounce)</option>
-                    </optgroup>
-                    <optgroup label="Count">
-                      <option value="each">each</option>
-                    </optgroup>
-                  </select>
+                  <label className="form-label">Package Size *</label>
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    <input
+                      type="number"
+                      className="form-input"
+                      value={ingredientForm.package_size || ''}
+                      onChange={(e) => setIngredientForm({ ...ingredientForm, package_size: parseFloat(e.target.value) || 0 })}
+                      placeholder="29"
+                      min="0"
+                      step="0.01"
+                      style={{ flex: 1 }}
+                    />
+                    <select
+                      className="form-select"
+                      value={ingredientForm.package_unit}
+                      onChange={(e) => setIngredientForm({ ...ingredientForm, package_unit: e.target.value })}
+                      style={{ width: '140px' }}
+                    >
+                      <option value="">-- select --</option>
+                      <optgroup label="Weight">
+                        <option value="oz">oz (ounces)</option>
+                        <option value="lb">lb (pounds)</option>
+                        <option value="g">g (grams)</option>
+                        <option value="kg">kg (kilograms)</option>
+                      </optgroup>
+                      <optgroup label="Volume">
+                        <option value="fl oz">fl oz</option>
+                        <option value="cup">cup(s)</option>
+                        <option value="pint">pint</option>
+                        <option value="quart">quart</option>
+                        <option value="gallon">gallon</option>
+                        <option value="ml">ml</option>
+                        <option value="L">L (liters)</option>
+                      </optgroup>
+                      <optgroup label="Package Types">
+                        <option value="can">can</option>
+                        <option value="jar">jar</option>
+                        <option value="bag">bag</option>
+                        <option value="box">box</option>
+                        <option value="bottle">bottle</option>
+                        <option value="pack">pack</option>
+                        <option value="each">each</option>
+                      </optgroup>
+                    </select>
+                  </div>
+                  <p className="form-hint">
+                    {isPackageType
+                      ? `How many ${ingredientForm.package_unit}s did you buy?`
+                      : 'How the ingredient is sold (e.g., "20 lb" or "10 fl oz")'
+                    }
+                  </p>
                 </div>
 
-                {ingredientForm.package_size > 0 && ingredientForm.package_price > 0 && (
+                {/* Contents fields - only show for package types (can, jar, bag, etc.) */}
+                {isPackageType && (
+                  <div className="form-group">
+                    <label className="form-label">Contents per {ingredientForm.package_unit} *</label>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                      <input
+                        type="number"
+                        className="form-input"
+                        value={ingredientForm.contents_size || ''}
+                        onChange={(e) => setIngredientForm({ ...ingredientForm, contents_size: parseFloat(e.target.value) || 0 })}
+                        placeholder="12"
+                        min="0"
+                        step="0.01"
+                        style={{ width: '100px' }}
+                      />
+                      <select
+                        className="form-select"
+                        value={ingredientForm.unit}
+                        onChange={(e) => setIngredientForm({ ...ingredientForm, unit: e.target.value })}
+                        style={{ width: '140px' }}
+                      >
+                        <optgroup label="Weight">
+                          <option value="g">g (grams)</option>
+                          <option value="oz">oz (ounces)</option>
+                          <option value="lb">lb (pounds)</option>
+                          <option value="kg">kg (kilograms)</option>
+                        </optgroup>
+                        <optgroup label="Volume">
+                          <option value="ml">ml (milliliters)</option>
+                          <option value="fl oz">fl oz</option>
+                          <option value="cup">cup</option>
+                          <option value="tsp">tsp</option>
+                          <option value="tbsp">tbsp</option>
+                        </optgroup>
+                      </select>
+                    </div>
+                    <p className="form-hint">
+                      How much is in each {ingredientForm.package_unit}? (e.g., "12 oz" per can)
+                    </p>
+                  </div>
+                )}
+
+                {ingredientForm.package_size > 0 && ingredientForm.package_price > 0 && (!isPackageType || ingredientForm.contents_size > 0) && (
                   <div style={{ backgroundColor: '#f5f5f5', padding: '12px', borderRadius: '4px', marginTop: '8px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <span style={{ fontWeight: '500' }}>Calculated Cost per Unit:</span>
                       <span style={{ fontWeight: '700', color: '#8B7355', fontSize: '1.1rem' }}>
-                        {formatCostPerUnit(ingredientForm.package_price / ingredientForm.package_size, ingredientForm.unit)}
+                        {isPackageType
+                          ? formatCostPerUnit(ingredientForm.package_price / (ingredientForm.package_size * ingredientForm.contents_size), ingredientForm.unit)
+                          : formatCostPerUnit(ingredientForm.package_price / ingredientForm.package_size, ingredientForm.package_unit)
+                        }
                       </span>
+                    </div>
+                    <div style={{ fontSize: '0.8rem', color: '#666', marginTop: '4px' }}>
+                      {isPackageType
+                        ? `$${ingredientForm.package_price.toFixed(2)} ÷ (${ingredientForm.package_size} ${ingredientForm.package_unit}s × ${ingredientForm.contents_size} ${ingredientForm.unit} each)`
+                        : `$${ingredientForm.package_price.toFixed(2)} ÷ ${ingredientForm.package_size} ${ingredientForm.package_unit}`
+                      }
                     </div>
                   </div>
                 )}
+
+                {/* Density for weight↔volume conversion */}
+                <div className="form-group" style={{ marginTop: '16px' }}>
+                  <label className="form-label">
+                    Weight per Volume
+                    <span style={{ fontWeight: 'normal', color: '#666' }}> (optional)</span>
+                  </label>
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    <input
+                      type="number"
+                      className="form-input"
+                      step="0.1"
+                      value={ingredientForm.density_grams || ''}
+                      onChange={(e) =>
+                        setIngredientForm({
+                          ...ingredientForm,
+                          density_grams: e.target.value ? parseFloat(e.target.value) : null,
+                        })
+                      }
+                      placeholder="grams"
+                      style={{ width: '100px' }}
+                    />
+                    <span>g per</span>
+                    <select
+                      className="form-select"
+                      value={ingredientForm.density_measure}
+                      onChange={(e) =>
+                        setIngredientForm({
+                          ...ingredientForm,
+                          density_measure: e.target.value as 'tsp' | 'tbsp' | 'cup',
+                        })
+                      }
+                      style={{ width: '90px' }}
+                    >
+                      <option value="tsp">tsp</option>
+                      <option value="tbsp">tbsp</option>
+                      <option value="cup">cup</option>
+                    </select>
+                  </div>
+                  <p className="form-hint" style={{ marginTop: '4px' }}>
+                    Needed for converting between weight and volume in recipes.
+                    <br />
+                    Measure a level amount and weigh it on a kitchen scale.
+                  </p>
+                </div>
               </div>
             </div>
             {ingredientSuccess && (

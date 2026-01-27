@@ -19,6 +19,7 @@ import { CSS } from '@dnd-kit/utilities';
 
 // Ingredient with library reference
 interface Ingredient {
+  id: string; // Unique ID for drag-drop sorting
   ingredient_id?: string;
   name: string;
   quantity: number;
@@ -53,6 +54,25 @@ function isWeightUnit(unit: string): boolean {
 // Check if a unit is a volume unit
 function isVolumeUnit(unit: string): boolean {
   return unit in UNIT_TO_ML;
+}
+
+// Check if conversion between two units requires density (cross-type: weight↔volume)
+function needsDensityForConversion(fromUnit: string, toUnit: string): boolean {
+  if (fromUnit === toUnit) return false;
+  const fromIsWeight = isWeightUnit(fromUnit);
+  const fromIsVolume = isVolumeUnit(fromUnit);
+  const toIsWeight = isWeightUnit(toUnit);
+  const toIsVolume = isVolumeUnit(toUnit);
+  // Cross-type conversion needed
+  return (fromIsWeight && toIsVolume) || (fromIsVolume && toIsWeight);
+}
+
+// Check if an ingredient has a conversion problem (needs density but doesn't have it)
+function hasConversionProblem(ing: Ingredient): boolean {
+  const baseUnit = ing.base_unit || ing.unit;
+  if (!needsDensityForConversion(ing.unit, baseUnit)) return false;
+  // Needs density but doesn't have a valid one
+  return !ing.density_g_per_ml || ing.density_g_per_ml <= 0;
 }
 
 // Convert quantity from one unit to another, with optional density for cross-type conversion
@@ -103,9 +123,6 @@ function calculateIngredientCost(ing: Ingredient): number {
   const baseUnit = ing.base_unit || ing.unit; // Fall back to recipe unit if no base_unit
   const quantityInBaseUnit = convertUnits(ing.quantity, ing.unit, baseUnit, ing.density_g_per_ml);
   const cost = quantityInBaseUnit * ing.cost_per_unit;
-
-  // Debug logging
-  console.log(`[COST] ${ing.name}: qty=${ing.quantity} ${ing.unit} -> ${quantityInBaseUnit.toFixed(4)} ${baseUnit}, cost=$${cost.toFixed(4)}, density=${ing.density_g_per_ml || 'NONE'}`);
 
   return cost;
 }
@@ -227,6 +244,110 @@ function SortableStep({
   );
 }
 
+// Sortable Ingredient Row Component
+function SortableIngredient({
+  ingredient,
+  index,
+  libraryIngredients,
+  onSelect,
+  onUpdate,
+  onRemove,
+  calculateCost,
+  onAddNew,
+}: {
+  ingredient: Ingredient;
+  index: number;
+  libraryIngredients: LibraryIngredient[];
+  onSelect: (index: number, libIng: LibraryIngredient) => void;
+  onUpdate: (index: number, field: keyof Ingredient, value: string | number) => void;
+  onRemove: (index: number) => void;
+  calculateCost: (ing: Ingredient) => number;
+  onAddNew: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: ingredient.id,
+  });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  return (
+    <div ref={setNodeRef} style={style} className="ingredient-row">
+      <div {...attributes} {...listeners} className="drag-handle" style={{ cursor: 'grab', padding: '0 8px', color: '#999' }}>
+        ≡
+      </div>
+      <IngredientDropdown
+        value={ingredient.name}
+        libraryIngredients={libraryIngredients}
+        onSelect={(libIng) => onSelect(index, libIng)}
+        onAddNew={onAddNew}
+      />
+      <input
+        type="number"
+        className="form-input ingredient-qty"
+        placeholder="Qty"
+        value={ingredient.quantity || ''}
+        onChange={(e) => onUpdate(index, 'quantity', parseFloat(e.target.value) || 0)}
+      />
+      <select
+        className="form-select ingredient-unit-select"
+        value={ingredient.unit || 'g'}
+        onChange={(e) => onUpdate(index, 'unit', e.target.value)}
+      >
+        <optgroup label="Weight">
+          <option value="g">g</option>
+          <option value="oz">oz</option>
+          <option value="lbs">lbs</option>
+          <option value="kg">kg</option>
+        </optgroup>
+        <optgroup label="Volume">
+          <option value="ml">ml</option>
+          <option value="tsp">tsp</option>
+          <option value="tbsp">tbsp</option>
+          <option value="cup">cup</option>
+          <option value="fl oz">fl oz</option>
+        </optgroup>
+        <optgroup label="Count">
+          <option value="each">each</option>
+        </optgroup>
+      </select>
+      <div className="ingredient-cost">
+        {ingredient.cost_per_unit ? (
+          hasConversionProblem(ingredient) ? (
+            <span style={{ color: '#e74c3c' }} title="Cost may be wrong: recipe uses different unit type than purchase unit, but no density set for conversion">
+              ⚠️ ${calculateCost(ingredient).toFixed(2)}
+            </span>
+          ) : (
+            `$${calculateCost(ingredient).toFixed(2)}`
+          )
+        ) : '-'}
+        {hasConversionProblem(ingredient) && (
+          <small style={{display: 'block', fontSize: '9px', color: '#e74c3c'}}>
+            needs density for {ingredient.unit}↔{ingredient.base_unit}
+          </small>
+        )}
+      </div>
+      <select
+        className="ingredient-phase-select"
+        value={ingredient.phase || 'base'}
+        onChange={(e) => onUpdate(index, 'phase', e.target.value)}
+      >
+        {INGREDIENT_PHASES.map((phase) => (
+          <option key={phase} value={phase}>
+            {phase.charAt(0).toUpperCase() + phase.slice(1)}
+          </option>
+        ))}
+      </select>
+      <button className="ingredient-remove" onClick={() => onRemove(index)}>
+        ×
+      </button>
+    </div>
+  );
+}
+
 // Ingredient Dropdown Component
 function IngredientDropdown({
   value,
@@ -324,6 +445,7 @@ function RecipesPage() {
 
   // Inline ingredient form
   const [showInlineForm, setShowInlineForm] = useState(false);
+  const [ingredientFormMessage, setIngredientFormMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [newIngredient, setNewIngredient] = useState({
     name: '',
     unit: 'g',
@@ -332,6 +454,8 @@ function RecipesPage() {
     package_unit: '',
     vendor: '',
     category: 'base',
+    density_grams: null as number | null, // User-friendly way to enter density
+    density_measure: 'tsp' as 'tsp' | 'tbsp' | 'cup', // Which volume measure they used
   });
 
   // Drag and drop sensors
@@ -370,18 +494,21 @@ function RecipesPage() {
   function openRecipe(recipe: Recipe) {
     setSelectedRecipe(recipe);
     setEditMode(false);
-    // Parse JSON fields with phase assignment
+    // Parse JSON fields with phase assignment and IDs
     try {
-      const base = JSON.parse(recipe.base_ingredients || '[]').map((ing: Ingredient) => ({
+      const base = JSON.parse(recipe.base_ingredients || '[]').map((ing: Ingredient, idx: number) => ({
         ...ing,
+        id: ing.id || `ing-base-${Date.now()}-${idx}`,
         phase: 'base' as const,
       }));
-      const fold = JSON.parse(recipe.fold_ingredients || '[]').map((ing: Ingredient) => ({
+      const fold = JSON.parse(recipe.fold_ingredients || '[]').map((ing: Ingredient, idx: number) => ({
         ...ing,
+        id: ing.id || `ing-fold-${Date.now()}-${idx}`,
         phase: 'fold' as const,
       }));
-      const lamination = JSON.parse(recipe.lamination_ingredients || '[]').map((ing: Ingredient) => ({
+      const lamination = JSON.parse(recipe.lamination_ingredients || '[]').map((ing: Ingredient, idx: number) => ({
         ...ing,
+        id: ing.id || `ing-lam-${Date.now()}-${idx}`,
         phase: 'lamination' as const,
       }));
       setEditIngredients([...base, ...fold, ...lamination]);
@@ -477,12 +604,22 @@ function RecipesPage() {
   function addIngredient() {
     setEditIngredients([
       ...editIngredients,
-      { name: '', quantity: 0, unit: 'g', cost_per_unit: 0, phase: 'base' },
+      { id: `ing-${Date.now()}-${editIngredients.length}`, name: '', quantity: 0, unit: 'g', cost_per_unit: 0, phase: 'base' },
     ]);
   }
 
+  function handleDragEndIngredients(event: DragEndEvent) {
+    const { active, over } = event;
+    if (over && active.id !== over.id) {
+      setEditIngredients((items) => {
+        const oldIndex = items.findIndex((i) => i.id === active.id);
+        const newIndex = items.findIndex((i) => i.id === over.id);
+        return arrayMove(items, oldIndex, newIndex);
+      });
+    }
+  }
+
   function selectIngredientFromLibrary(index: number, libIngredient: LibraryIngredient) {
-    console.log('[SELECT] Library ingredient:', libIngredient);
     const updated = [...editIngredients];
     updated[index] = {
       ...updated[index],
@@ -493,20 +630,12 @@ function RecipesPage() {
       cost_per_unit: libIngredient.cost_per_unit,
       density_g_per_ml: libIngredient.density_g_per_ml, // Store density for cross-type conversions
     };
-    console.log('[SELECT] Updated ingredient:', updated[index]);
     setEditIngredients(updated);
   }
 
   function updateIngredient(index: number, field: keyof Ingredient, value: string | number) {
     const updated = [...editIngredients];
     updated[index] = { ...updated[index], [field]: value };
-
-    // Debug alert when unit changes
-    if (field === 'unit') {
-      const ing = updated[index];
-      alert(`DEBUG: ${ing.name}\nbase_unit: ${ing.base_unit || 'NOT SET'}\ndensity: ${ing.density_g_per_ml || 'NOT SET'}\nChanged to: ${value}`);
-    }
-
     setEditIngredients(updated);
   }
 
@@ -552,20 +681,30 @@ function RecipesPage() {
   }
 
   async function saveNewIngredient() {
+    setIngredientFormMessage(null);
+
     if (!newIngredient.name.trim()) {
-      alert('Please enter an ingredient name.');
+      setIngredientFormMessage({ type: 'error', text: 'Please enter an ingredient name.' });
       return;
     }
     if (!newIngredient.package_size || newIngredient.package_size <= 0) {
-      alert('Please enter a valid package size greater than 0.');
+      setIngredientFormMessage({ type: 'error', text: 'Please enter a valid package size greater than 0.' });
       return;
     }
     if (newIngredient.package_price <= 0) {
-      alert('Please enter a valid package price greater than 0.');
+      setIngredientFormMessage({ type: 'error', text: 'Please enter a valid package price greater than 0.' });
       return;
     }
     try {
-      console.log('Creating ingredient with data:', {
+      // Convert grams per measure to density (g/ml)
+      // 1 tsp = 4.92892 ml, 1 tbsp = 14.7868 ml, 1 cup = 236.588 ml
+      const mlPerMeasure: Record<string, number> = { tsp: 4.92892, tbsp: 14.7868, cup: 236.588 };
+      const density = newIngredient.density_grams
+        ? newIngredient.density_grams / mlPerMeasure[newIngredient.density_measure]
+        : null;
+
+      const savedName = newIngredient.name;
+      await window.api.createIngredient({
         name: newIngredient.name,
         unit: newIngredient.unit,
         packagePrice: newIngredient.package_price,
@@ -573,19 +712,9 @@ function RecipesPage() {
         packageUnit: newIngredient.package_unit,
         vendor: newIngredient.vendor,
         category: newIngredient.category,
+        density: density,
       });
-      const result = await window.api.createIngredient({
-        name: newIngredient.name,
-        unit: newIngredient.unit,
-        packagePrice: newIngredient.package_price,
-        packageSize: newIngredient.package_size,
-        packageUnit: newIngredient.package_unit,
-        vendor: newIngredient.vendor,
-        category: newIngredient.category,
-      });
-      console.log('Ingredient created:', result);
       await loadLibraryIngredients();
-      setShowInlineForm(false);
       setNewIngredient({
         name: '',
         unit: 'g',
@@ -594,11 +723,18 @@ function RecipesPage() {
         package_unit: '',
         vendor: '',
         category: 'base',
+        density_grams: null,
+        density_measure: 'tsp',
       });
-      alert('Ingredient saved successfully!');
+      setIngredientFormMessage({ type: 'success', text: `"${savedName}" added! You can now select it from the dropdown.` });
+      // Auto-hide success message and close form after a delay
+      setTimeout(() => {
+        setShowInlineForm(false);
+        setIngredientFormMessage(null);
+      }, 2000);
     } catch (error) {
       console.error('Failed to create ingredient:', error);
-      alert(`Failed to save ingredient: ${error instanceof Error ? error.message : String(error)}`);
+      setIngredientFormMessage({ type: 'error', text: `Failed to save: ${error instanceof Error ? error.message : String(error)}` });
     }
   }
 
@@ -753,9 +889,15 @@ function RecipesPage() {
                                 {ing.quantity} {ing.unit}
                               </td>
                               <td>
-                                {ing.cost_per_unit
-                                  ? `$${calculateIngredientCost(ing).toFixed(2)}`
-                                  : '-'}
+                                {ing.cost_per_unit ? (
+                                  hasConversionProblem(ing) ? (
+                                    <span style={{ color: '#e74c3c' }} title="Cost may be wrong: needs density for unit conversion">
+                                      ⚠️ ${calculateIngredientCost(ing).toFixed(2)}
+                                    </span>
+                                  ) : (
+                                    `$${calculateIngredientCost(ing).toFixed(2)}`
+                                  )
+                                ) : '-'}
                               </td>
                             </tr>
                           ))}
@@ -784,9 +926,15 @@ function RecipesPage() {
                                 {ing.quantity} {ing.unit}
                               </td>
                               <td>
-                                {ing.cost_per_unit
-                                  ? `$${calculateIngredientCost(ing).toFixed(2)}`
-                                  : '-'}
+                                {ing.cost_per_unit ? (
+                                  hasConversionProblem(ing) ? (
+                                    <span style={{ color: '#e74c3c' }} title="Cost may be wrong: needs density for unit conversion">
+                                      ⚠️ ${calculateIngredientCost(ing).toFixed(2)}
+                                    </span>
+                                  ) : (
+                                    `$${calculateIngredientCost(ing).toFixed(2)}`
+                                  )
+                                ) : '-'}
                               </td>
                             </tr>
                           ))}
@@ -815,9 +963,15 @@ function RecipesPage() {
                                 {ing.quantity} {ing.unit}
                               </td>
                               <td>
-                                {ing.cost_per_unit
-                                  ? `$${calculateIngredientCost(ing).toFixed(2)}`
-                                  : '-'}
+                                {ing.cost_per_unit ? (
+                                  hasConversionProblem(ing) ? (
+                                    <span style={{ color: '#e74c3c' }} title="Cost may be wrong: needs density for unit conversion">
+                                      ⚠️ ${calculateIngredientCost(ing).toFixed(2)}
+                                    </span>
+                                  ) : (
+                                    `$${calculateIngredientCost(ing).toFixed(2)}`
+                                  )
+                                ) : '-'}
                               </td>
                             </tr>
                           ))}
@@ -893,6 +1047,7 @@ function RecipesPage() {
                     {/* Column Headers */}
                     {editIngredients.length > 0 && (
                       <div className="ingredient-header">
+                        <span style={{ width: '30px' }}></span>
                         <span style={{ flex: 2 }}>Ingredient</span>
                         <span style={{ width: '70px', textAlign: 'center' }}>Qty</span>
                         <span style={{ minWidth: '60px', textAlign: 'center' }}>Unit</span>
@@ -902,71 +1057,30 @@ function RecipesPage() {
                       </div>
                     )}
 
-                    {editIngredients.map((ing, i) => (
-                      <div key={i} className="ingredient-row">
-                        <IngredientDropdown
-                          value={ing.name}
-                          libraryIngredients={libraryIngredients}
-                          onSelect={(libIng) => selectIngredientFromLibrary(i, libIng)}
-                          onAddNew={() => setShowInlineForm(true)}
-                        />
-                        <input
-                          type="number"
-                          className="form-input ingredient-qty"
-                          placeholder="Qty"
-                          value={ing.quantity || ''}
-                          onChange={(e) =>
-                            updateIngredient(i, 'quantity', parseFloat(e.target.value) || 0)
-                          }
-                        />
-                        <select
-                          className="form-select ingredient-unit-select"
-                          value={ing.unit || 'g'}
-                          onChange={(e) => updateIngredient(i, 'unit', e.target.value)}
-                        >
-                          <optgroup label="Weight">
-                            <option value="g">g</option>
-                            <option value="oz">oz</option>
-                            <option value="lbs">lbs</option>
-                            <option value="kg">kg</option>
-                          </optgroup>
-                          <optgroup label="Volume">
-                            <option value="ml">ml</option>
-                            <option value="tsp">tsp</option>
-                            <option value="tbsp">tbsp</option>
-                            <option value="cup">cup</option>
-                            <option value="fl oz">fl oz</option>
-                          </optgroup>
-                          <optgroup label="Count">
-                            <option value="each">each</option>
-                          </optgroup>
-                        </select>
-                        <div className="ingredient-cost">
-                          {ing.cost_per_unit
-                            ? `$${calculateIngredientCost(ing).toFixed(2)}`
-                            : '-'}
-                          <small style={{display: 'block', fontSize: '9px', color: '#888'}}>
-                            base:{ing.base_unit || '?'} d:{ing.density_g_per_ml?.toFixed(2) || '?'}
-                          </small>
-                        </div>
-                        <select
-                          className="ingredient-phase-select"
-                          value={ing.phase || 'base'}
-                          onChange={(e) =>
-                            updateIngredient(i, 'phase', e.target.value)
-                          }
-                        >
-                          {INGREDIENT_PHASES.map((phase) => (
-                            <option key={phase} value={phase}>
-                              {phase.charAt(0).toUpperCase() + phase.slice(1)}
-                            </option>
-                          ))}
-                        </select>
-                        <button className="ingredient-remove" onClick={() => removeIngredient(i)}>
-                          ×
-                        </button>
-                      </div>
-                    ))}
+                    <DndContext
+                      sensors={sensors}
+                      collisionDetection={closestCenter}
+                      onDragEnd={handleDragEndIngredients}
+                    >
+                      <SortableContext
+                        items={editIngredients.map((ing) => ing.id)}
+                        strategy={verticalListSortingStrategy}
+                      >
+                        {editIngredients.map((ing, i) => (
+                          <SortableIngredient
+                            key={ing.id}
+                            ingredient={ing}
+                            index={i}
+                            libraryIngredients={libraryIngredients}
+                            onSelect={selectIngredientFromLibrary}
+                            onUpdate={updateIngredient}
+                            onRemove={removeIngredient}
+                            calculateCost={calculateIngredientCost}
+                            onAddNew={() => setShowInlineForm(true)}
+                          />
+                        ))}
+                      </SortableContext>
+                    </DndContext>
 
                     {/* Add Ingredient Button */}
                     <button
@@ -1080,11 +1194,68 @@ function RecipesPage() {
                               <option value="misc">Misc</option>
                             </select>
                           </div>
+                          <div className="form-group">
+                            <label className="form-label">
+                              Weight per Volume
+                              <small style={{ display: 'block', fontSize: '10px', color: '#666', fontWeight: 'normal' }}>
+                                For weight↔volume conversion (optional)
+                              </small>
+                            </label>
+                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                              <input
+                                type="number"
+                                className="form-input"
+                                step="0.1"
+                                style={{ width: '80px' }}
+                                value={newIngredient.density_grams || ''}
+                                onChange={(e) =>
+                                  setNewIngredient({
+                                    ...newIngredient,
+                                    density_grams: e.target.value ? parseFloat(e.target.value) : null,
+                                  })
+                                }
+                                placeholder="grams"
+                              />
+                              <span>g per</span>
+                              <select
+                                className="form-select"
+                                style={{ width: '80px' }}
+                                value={newIngredient.density_measure}
+                                onChange={(e) =>
+                                  setNewIngredient({
+                                    ...newIngredient,
+                                    density_measure: e.target.value as 'tsp' | 'tbsp' | 'cup',
+                                  })
+                                }
+                              >
+                                <option value="tsp">tsp</option>
+                                <option value="tbsp">tbsp</option>
+                                <option value="cup">cup</option>
+                              </select>
+                            </div>
+                          </div>
                         </div>
+                        {ingredientFormMessage && (
+                          <div
+                            style={{
+                              padding: '10px 14px',
+                              marginBottom: '12px',
+                              borderRadius: '6px',
+                              backgroundColor: ingredientFormMessage.type === 'error' ? '#ffebee' : '#e8f5e9',
+                              color: ingredientFormMessage.type === 'error' ? '#c62828' : '#2e7d32',
+                              fontWeight: 500,
+                            }}
+                          >
+                            {ingredientFormMessage.text}
+                          </div>
+                        )}
                         <div className="inline-form-buttons">
                           <button
                             className="btn btn-secondary"
-                            onClick={() => setShowInlineForm(false)}
+                            onClick={() => {
+                              setShowInlineForm(false);
+                              setIngredientFormMessage(null);
+                            }}
                           >
                             Cancel
                           </button>

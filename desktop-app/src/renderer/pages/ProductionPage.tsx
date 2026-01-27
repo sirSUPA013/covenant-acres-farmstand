@@ -1,19 +1,22 @@
 import { useState, useEffect } from 'react';
 
-interface ExtraProduction {
+interface ProductionRecord {
   id: string;
-  bake_slot_id: string | null;
-  production_date: string;
+  prep_sheet_id: string;
+  order_id: string | null;
   flavor_id: string;
   flavor_name: string;
   quantity: number;
-  disposition: 'sold' | 'gifted' | 'wasted' | 'personal' | 'pending';
+  status: 'pending' | 'picked_up' | 'sold' | 'wasted' | 'personal' | 'gifted';
   sale_price: number | null;
-  total_revenue: number | null;
   notes: string | null;
-  created_at: string;
-  bake_date: string | null;
-  location_name: string | null;
+  bake_date: string;
+  first_name?: string;
+  last_name?: string;
+  email?: string;
+  payment_status?: string;
+  payment_method?: string;
+  total_amount?: number;
 }
 
 interface Flavor {
@@ -22,76 +25,77 @@ interface Flavor {
   is_active: number;
 }
 
-interface BakeSlot {
-  id: string;
-  date: string;
-  location_name: string;
+interface GroupedOrder {
+  orderId: string;
+  customerName: string;
+  email: string;
+  paymentStatus: string;
+  paymentMethod: string | null;
+  totalAmount: number;
+  items: ProductionRecord[];
 }
 
-interface ProductionAnalytics {
-  sold: { count: number; loaves: number; revenue: number };
-  gifted: { count: number; loaves: number; cost: number };
-  wasted: { count: number; loaves: number; cost: number };
-  personal: { count: number; loaves: number };
-  pending?: { count: number; loaves: number };
-}
+const STATUS_OPTIONS = ['pending', 'picked_up', 'sold', 'wasted', 'personal', 'gifted'] as const;
+type ProductionStatus = typeof STATUS_OPTIONS[number];
 
-const DISPOSITIONS = ['sold', 'pending', 'gifted', 'wasted', 'personal'] as const;
-type Disposition = typeof DISPOSITIONS[number];
-
-const DISPOSITION_LABELS: Record<Disposition, string> = {
-  sold: 'Sold',
+const STATUS_LABELS: Record<ProductionStatus, string> = {
   pending: 'Pending',
-  gifted: 'Gifted',
+  picked_up: 'Picked Up',
+  sold: 'Sold',
   wasted: 'Wasted',
   personal: 'Personal',
+  gifted: 'Gifted',
 };
 
-const DISPOSITION_COLORS: Record<Disposition, string> = {
-  sold: '#2e7d32',
-  pending: '#f57c00', // Orange for pending/unsold
-  gifted: '#1565c0',
+const STATUS_COLORS: Record<ProductionStatus, string> = {
+  pending: '#f57c00',
+  picked_up: '#2e7d32',
+  sold: '#1565c0',
   wasted: '#c62828',
   personal: '#7b1fa2',
+  gifted: '#00838f',
 };
 
+const PAYMENT_STATUSES = ['pending', 'paid', 'refunded', 'voided'] as const;
+const PAYMENT_METHODS = ['cash', 'venmo', 'cashapp', 'zelle', 'credit', 'other'] as const;
+
 function ProductionPage() {
-  const [entries, setEntries] = useState<ExtraProduction[]>([]);
+  const [records, setRecords] = useState<ProductionRecord[]>([]);
   const [loading, setLoading] = useState(true);
-  const [analytics, setAnalytics] = useState<ProductionAnalytics | null>(null);
 
   // Filters
   const [dateRange, setDateRange] = useState('30days');
+  const [filterStatus, setFilterStatus] = useState('');
   const [filterFlavor, setFilterFlavor] = useState('');
-  const [filterDisposition, setFilterDisposition] = useState('');
+  const [viewMode, setViewMode] = useState<'grouped' | 'flat'>('grouped');
 
   // Reference data
   const [flavors, setFlavors] = useState<Flavor[]>([]);
-  const [bakeSlots, setBakeSlots] = useState<BakeSlot[]>([]);
 
-  // Modal state
-  const [showModal, setShowModal] = useState(false);
-  const [editingEntry, setEditingEntry] = useState<ExtraProduction | null>(null);
+  // Edit status modal
+  const [editingRecord, setEditingRecord] = useState<ProductionRecord | null>(null);
+  const [editStatus, setEditStatus] = useState<ProductionStatus>('pending');
+  const [editSalePrice, setEditSalePrice] = useState(0);
+  const [editNotes, setEditNotes] = useState('');
 
-  // Form state
-  const [formLinkType, setFormLinkType] = useState<'slot' | 'date'>('date');
-  const [formBakeSlotId, setFormBakeSlotId] = useState('');
-  const [formProductionDate, setFormProductionDate] = useState(new Date().toISOString().split('T')[0]);
-  const [formFlavorId, setFormFlavorId] = useState('');
-  const [formQuantity, setFormQuantity] = useState(1);
-  const [formDisposition, setFormDisposition] = useState<Disposition>('sold');
-  const [formSalePrice, setFormSalePrice] = useState(0);
-  const [formNotes, setFormNotes] = useState('');
+  // Split modal
+  const [splittingRecord, setSplittingRecord] = useState<ProductionRecord | null>(null);
+  const [splitQuantity, setSplitQuantity] = useState(1);
+  const [splitStatus, setSplitStatus] = useState<ProductionStatus>('sold');
+
+  // Payment edit modal
+  const [editingPayment, setEditingPayment] = useState<GroupedOrder | null>(null);
+  const [paymentStatus, setPaymentStatus] = useState('pending');
+  const [paymentMethod, setPaymentMethod] = useState('');
 
   useEffect(() => {
     loadData();
     loadFlavors();
-    loadBakeSlots();
   }, []);
 
   useEffect(() => {
     loadData();
-  }, [dateRange, filterFlavor, filterDisposition]);
+  }, [dateRange, filterStatus, filterFlavor]);
 
   function getDateFilters() {
     const today = new Date();
@@ -125,16 +129,11 @@ function ProductionPage() {
       const filters: Record<string, string> = {};
       if (dateFrom) filters.dateFrom = dateFrom;
       if (dateTo) filters.dateTo = dateTo;
+      if (filterStatus) filters.status = filterStatus;
       if (filterFlavor) filters.flavorId = filterFlavor;
-      if (filterDisposition) filters.disposition = filterDisposition;
 
-      const [entriesData, analyticsData] = await Promise.all([
-        window.api.getExtraProduction(filters),
-        window.api.getExtraProductionAnalytics(filters),
-      ]);
-
-      setEntries(entriesData as ExtraProduction[]);
-      setAnalytics(analyticsData);
+      const data = await window.api.getProduction(filters);
+      setRecords(data as ProductionRecord[]);
     } catch (error) {
       console.error('Failed to load production data:', error);
     }
@@ -150,94 +149,115 @@ function ProductionPage() {
     }
   }
 
-  async function loadBakeSlots() {
-    try {
-      // Get past bake slots only (can't log production for future dates)
-      const today = new Date().toISOString().split('T')[0];
-      const dateFrom = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-      const data = await window.api.getBakeSlots({ dateFrom, dateTo: today });
-      setBakeSlots(data as BakeSlot[]);
-    } catch (error) {
-      console.error('Failed to load bake slots:', error);
-    }
-  }
+  // Group records by order (for pre-ordered) or by bake_date (for extras)
+  function groupRecords(): { orders: GroupedOrder[]; extras: Map<string, ProductionRecord[]> } {
+    const orderMap = new Map<string, ProductionRecord[]>();
+    const extrasByDate = new Map<string, ProductionRecord[]>();
 
-  function openCreateModal() {
-    setEditingEntry(null);
-    setFormLinkType('date');
-    setFormBakeSlotId('');
-    setFormProductionDate(new Date().toISOString().split('T')[0]);
-    setFormFlavorId(flavors[0]?.id || '');
-    setFormQuantity(1);
-    setFormDisposition('sold');
-    setFormSalePrice(0);
-    setFormNotes('');
-    setShowModal(true);
-  }
-
-  function openEditModal(entry: ExtraProduction) {
-    setEditingEntry(entry);
-    setFormLinkType(entry.bake_slot_id ? 'slot' : 'date');
-    setFormBakeSlotId(entry.bake_slot_id || '');
-    setFormProductionDate(entry.production_date);
-    setFormFlavorId(entry.flavor_id);
-    setFormQuantity(entry.quantity);
-    setFormDisposition(entry.disposition);
-    setFormSalePrice(entry.sale_price || 0);
-    setFormNotes(entry.notes || '');
-    setShowModal(true);
-  }
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-
-    // Get production date from bake slot if linked
-    let productionDate = formProductionDate;
-    if (formLinkType === 'slot' && formBakeSlotId) {
-      const slot = bakeSlots.find((s) => s.id === formBakeSlotId);
-      if (slot) {
-        productionDate = slot.date;
-      }
-    }
-
-    const data = {
-      bakeSlotId: formLinkType === 'slot' ? formBakeSlotId : null,
-      productionDate,
-      flavorId: formFlavorId,
-      quantity: formQuantity,
-      disposition: formDisposition,
-      salePrice: formDisposition === 'sold' ? formSalePrice : null,
-      notes: formNotes || null,
-    };
-
-    try {
-      if (editingEntry) {
-        await window.api.updateExtraProduction(editingEntry.id, data);
+    records.forEach(record => {
+      if (record.order_id) {
+        const existing = orderMap.get(record.order_id) || [];
+        existing.push(record);
+        orderMap.set(record.order_id, existing);
       } else {
-        await window.api.createExtraProduction(data);
+        const existing = extrasByDate.get(record.bake_date) || [];
+        existing.push(record);
+        extrasByDate.set(record.bake_date, existing);
       }
-      setShowModal(false);
+    });
+
+    const orders: GroupedOrder[] = [];
+    orderMap.forEach((items, orderId) => {
+      const firstItem = items[0];
+      orders.push({
+        orderId,
+        customerName: `${firstItem.first_name || ''} ${firstItem.last_name || ''}`.trim() || 'Unknown',
+        email: firstItem.email || '',
+        paymentStatus: firstItem.payment_status || 'pending',
+        paymentMethod: firstItem.payment_method || null,
+        totalAmount: firstItem.total_amount || 0,
+        items,
+      });
+    });
+
+    // Sort orders by customer name
+    orders.sort((a, b) => a.customerName.localeCompare(b.customerName));
+
+    return { orders, extras: extrasByDate };
+  }
+
+  function openEditModal(record: ProductionRecord) {
+    setEditingRecord(record);
+    setEditStatus(record.status);
+    setEditSalePrice(record.sale_price || 0);
+    setEditNotes(record.notes || '');
+  }
+
+  async function handleSaveEdit() {
+    if (!editingRecord) return;
+    try {
+      await window.api.updateProduction(editingRecord.id, {
+        status: editStatus,
+        salePrice: editStatus === 'sold' ? editSalePrice : null,
+        notes: editNotes || null,
+      });
+      setEditingRecord(null);
       loadData();
     } catch (error) {
-      console.error('Failed to save entry:', error);
+      console.error('Failed to update record:', error);
+      alert('Failed to update record');
     }
   }
 
-  async function handleDelete(id: string) {
-    if (!confirm('Are you sure you want to delete this entry?')) return;
+  function openSplitModal(record: ProductionRecord) {
+    if (record.quantity < 2) {
+      alert('Cannot split a single loaf');
+      return;
+    }
+    setSplittingRecord(record);
+    setSplitQuantity(1);
+    setSplitStatus('sold');
+  }
+
+  async function handleSplit() {
+    if (!splittingRecord || splitQuantity < 1 || splitQuantity >= splittingRecord.quantity) return;
     try {
-      await window.api.deleteExtraProduction(id);
+      await window.api.splitProduction(splittingRecord.id, splitQuantity, splitStatus);
+      setSplittingRecord(null);
       loadData();
     } catch (error) {
-      console.error('Failed to delete entry:', error);
+      console.error('Failed to split record:', error);
+      alert('Failed to split record: ' + (error as Error).message);
+    }
+  }
+
+  function openPaymentModal(order: GroupedOrder) {
+    setEditingPayment(order);
+    setPaymentStatus(order.paymentStatus);
+    setPaymentMethod(order.paymentMethod || '');
+  }
+
+  async function handleSavePayment() {
+    if (!editingPayment) return;
+    try {
+      await window.api.updateOrderPaymentFromProduction(
+        editingPayment.orderId,
+        paymentStatus,
+        paymentMethod || undefined
+      );
+      setEditingPayment(null);
+      loadData();
+    } catch (error) {
+      console.error('Failed to update payment:', error);
+      alert('Failed to update payment');
     }
   }
 
   function formatDate(dateStr: string): string {
-    return new Date(dateStr).toLocaleDateString('en-US', {
+    return new Date(dateStr + 'T12:00:00').toLocaleDateString('en-US', {
+      weekday: 'short',
       month: 'short',
       day: 'numeric',
-      year: 'numeric',
     });
   }
 
@@ -245,15 +265,37 @@ function ProductionPage() {
     return `$${amount.toFixed(2)}`;
   }
 
+  function getTotalLoaves(): number {
+    return records.reduce((sum, r) => sum + r.quantity, 0);
+  }
+
+  function getStatusSummary(): Record<ProductionStatus, number> {
+    const summary: Record<ProductionStatus, number> = {
+      pending: 0,
+      picked_up: 0,
+      sold: 0,
+      wasted: 0,
+      personal: 0,
+      gifted: 0,
+    };
+    records.forEach(r => {
+      summary[r.status] += r.quantity;
+    });
+    return summary;
+  }
+
+  const { orders, extras } = groupRecords();
+  const statusSummary = getStatusSummary();
+
   return (
     <div className="production-page">
       <div className="page-header">
-        <h1 className="page-title">Production Log</h1>
+        <h1 className="page-title">Production</h1>
         <div className="header-actions">
           <select
             className="form-select"
             value={dateRange}
-            onChange={(e) => setDateRange(e.target.value)}
+            onChange={e => setDateRange(e.target.value)}
           >
             <option value="7days">Last 7 Days</option>
             <option value="30days">Last 30 Days</option>
@@ -261,352 +303,507 @@ function ProductionPage() {
             <option value="year">This Year</option>
             <option value="all">All Time</option>
           </select>
-          <button className="btn btn-primary" onClick={openCreateModal}>
-            + Log Production
-          </button>
+          <div className="view-toggle">
+            <button
+              className={`toggle-btn ${viewMode === 'grouped' ? 'active' : ''}`}
+              onClick={() => setViewMode('grouped')}
+            >
+              Grouped
+            </button>
+            <button
+              className={`toggle-btn ${viewMode === 'flat' ? 'active' : ''}`}
+              onClick={() => setViewMode('flat')}
+            >
+              Flat
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* Stats Cards */}
-      {analytics && (
-        <div className="stats-grid">
-          <div className="stat-card">
-            <div className="stat-value" style={{ color: DISPOSITION_COLORS.sold }}>
-              {formatCurrency(analytics.sold.revenue)}
-            </div>
-            <div className="stat-label">Walk-in Sales ({analytics.sold.loaves} loaves)</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-value" style={{ color: DISPOSITION_COLORS.pending }}>
-              {analytics.pending?.loaves ?? 0}
-            </div>
-            <div className="stat-label">Pending (unsold)</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-value" style={{ color: DISPOSITION_COLORS.gifted }}>
-              {analytics.gifted.loaves}
-            </div>
-            <div className="stat-label">Gifted (${analytics.gifted.cost.toFixed(2)} value)</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-value" style={{ color: DISPOSITION_COLORS.wasted }}>
-              {analytics.wasted.loaves}
-            </div>
-            <div className="stat-label">Wasted (${analytics.wasted.cost.toFixed(2)} loss)</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-value" style={{ color: DISPOSITION_COLORS.personal }}>
-              {analytics.personal.loaves}
-            </div>
-            <div className="stat-label">Personal Use</div>
-          </div>
+      {/* Stats Summary */}
+      <div className="stats-grid">
+        <div className="stat-card">
+          <div className="stat-value">{getTotalLoaves()}</div>
+          <div className="stat-label">Total Loaves</div>
         </div>
-      )}
+        {STATUS_OPTIONS.map(status => (
+          <div key={status} className="stat-card">
+            <div className="stat-value" style={{ color: STATUS_COLORS[status] }}>
+              {statusSummary[status]}
+            </div>
+            <div className="stat-label">{STATUS_LABELS[status]}</div>
+          </div>
+        ))}
+      </div>
 
       {/* Filters */}
-      <div className="card" style={{ marginBottom: '16px' }}>
+      <div className="card filters-card">
         <div className="filters-row">
+          <div className="filter-group">
+            <label className="form-label">Status</label>
+            <select
+              className="form-select"
+              value={filterStatus}
+              onChange={e => setFilterStatus(e.target.value)}
+            >
+              <option value="">All Statuses</option>
+              {STATUS_OPTIONS.map(s => (
+                <option key={s} value={s}>{STATUS_LABELS[s]}</option>
+              ))}
+            </select>
+          </div>
           <div className="filter-group">
             <label className="form-label">Flavor</label>
             <select
               className="form-select"
               value={filterFlavor}
-              onChange={(e) => setFilterFlavor(e.target.value)}
+              onChange={e => setFilterFlavor(e.target.value)}
             >
               <option value="">All Flavors</option>
-              {flavors.filter((f) => f.is_active).map((flavor) => (
-                <option key={flavor.id} value={flavor.id}>
-                  {flavor.name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="filter-group">
-            <label className="form-label">Disposition</label>
-            <select
-              className="form-select"
-              value={filterDisposition}
-              onChange={(e) => setFilterDisposition(e.target.value)}
-            >
-              <option value="">All Types</option>
-              {DISPOSITIONS.map((d) => (
-                <option key={d} value={d}>
-                  {DISPOSITION_LABELS[d]}
-                </option>
+              {flavors.filter(f => f.is_active).map(f => (
+                <option key={f.id} value={f.id}>{f.name}</option>
               ))}
             </select>
           </div>
         </div>
       </div>
 
-      {/* Data Table */}
-      <div className="card">
-        {loading ? (
-          <div className="loading">Loading production log...</div>
-        ) : entries.length === 0 ? (
+      {/* Content */}
+      {loading ? (
+        <div className="card">
+          <div className="loading">Loading production data...</div>
+        </div>
+      ) : records.length === 0 ? (
+        <div className="card">
           <div className="empty-state">
             <div className="empty-icon">📦</div>
-            <p>No extra production logged yet.</p>
-            <button className="btn btn-primary" onClick={openCreateModal}>
-              Log Your First Entry
-            </button>
+            <p>No production records yet.</p>
+            <p className="empty-hint">Complete a prep sheet to create production records.</p>
           </div>
-        ) : (
+        </div>
+      ) : viewMode === 'grouped' ? (
+        <>
+          {/* Grouped by Order */}
+          {orders.length > 0 && (
+            <div className="card">
+              <div className="card-header">
+                <h2 className="card-title">Pre-Ordered</h2>
+              </div>
+              <div className="order-groups">
+                {orders.map(order => (
+                  <div key={order.orderId} className="order-group">
+                    <div className="order-group-header">
+                      <div className="order-info">
+                        <strong>{order.customerName}</strong>
+                        <span className="order-email">{order.email}</span>
+                      </div>
+                      <div className="order-payment">
+                        <span className={`payment-badge ${order.paymentStatus}`}>
+                          {order.paymentStatus}
+                        </span>
+                        {order.paymentMethod && (
+                          <span className="payment-method">{order.paymentMethod}</span>
+                        )}
+                        <span className="order-total">{formatCurrency(order.totalAmount)}</span>
+                        <button
+                          className="btn btn-sm btn-secondary"
+                          onClick={() => openPaymentModal(order)}
+                        >
+                          Edit Payment
+                        </button>
+                      </div>
+                    </div>
+                    <table className="data-table nested-table">
+                      <thead>
+                        <tr>
+                          <th>Flavor</th>
+                          <th className="text-center">Qty</th>
+                          <th>Status</th>
+                          <th>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {order.items.map(item => (
+                          <tr key={item.id}>
+                            <td>{item.flavor_name}</td>
+                            <td className="text-center">{item.quantity}</td>
+                            <td>
+                              <select
+                                className="form-select inline-select"
+                                value={item.status}
+                                onChange={async e => {
+                                  try {
+                                    await window.api.updateProduction(item.id, {
+                                      status: e.target.value,
+                                    });
+                                    loadData();
+                                  } catch (error) {
+                                    console.error('Failed to update:', error);
+                                  }
+                                }}
+                              >
+                                {STATUS_OPTIONS.map(s => (
+                                  <option key={s} value={s}>{STATUS_LABELS[s]}</option>
+                                ))}
+                              </select>
+                            </td>
+                            <td>
+                              <button
+                                className="btn btn-sm btn-secondary"
+                                onClick={() => openEditModal(item)}
+                              >
+                                Edit
+                              </button>
+                              {item.quantity > 1 && (
+                                <button
+                                  className="btn btn-sm btn-secondary"
+                                  onClick={() => openSplitModal(item)}
+                                  style={{ marginLeft: '4px' }}
+                                >
+                                  Split
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Extras by Bake Date */}
+          {extras.size > 0 && (
+            <div className="card">
+              <div className="card-header">
+                <h2 className="card-title">Extras (Not Pre-Ordered)</h2>
+              </div>
+              {Array.from(extras.entries()).map(([bakeDate, items]) => (
+                <div key={bakeDate} className="extras-section">
+                  <h3 className="section-date">{formatDate(bakeDate)}</h3>
+                  <table className="data-table nested-table">
+                    <thead>
+                      <tr>
+                        <th>Flavor</th>
+                        <th className="text-center">Qty</th>
+                        <th>Status</th>
+                        <th>Price</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {items.map(item => (
+                        <tr key={item.id}>
+                          <td>{item.flavor_name}</td>
+                          <td className="text-center">{item.quantity}</td>
+                          <td>
+                            <select
+                              className="form-select inline-select"
+                              value={item.status}
+                              onChange={async e => {
+                                try {
+                                  await window.api.updateProduction(item.id, {
+                                    status: e.target.value,
+                                  });
+                                  loadData();
+                                } catch (error) {
+                                  console.error('Failed to update:', error);
+                                }
+                              }}
+                            >
+                              {STATUS_OPTIONS.map(s => (
+                                <option key={s} value={s}>{STATUS_LABELS[s]}</option>
+                              ))}
+                            </select>
+                          </td>
+                          <td>
+                            {item.status === 'sold' && item.sale_price
+                              ? formatCurrency(item.sale_price * item.quantity)
+                              : '-'}
+                          </td>
+                          <td>
+                            <button
+                              className="btn btn-sm btn-secondary"
+                              onClick={() => openEditModal(item)}
+                            >
+                              Edit
+                            </button>
+                            {item.quantity > 1 && (
+                              <button
+                                className="btn btn-sm btn-secondary"
+                                onClick={() => openSplitModal(item)}
+                                style={{ marginLeft: '4px' }}
+                              >
+                                Split
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      ) : (
+        /* Flat View */
+        <div className="card">
           <table className="data-table">
             <thead>
               <tr>
                 <th>Date</th>
+                <th>Customer/Type</th>
                 <th>Flavor</th>
-                <th>Qty</th>
-                <th>Disposition</th>
-                <th>Revenue</th>
-                <th>Notes</th>
+                <th className="text-center">Qty</th>
+                <th>Status</th>
+                <th>Price</th>
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody>
-              {entries.map((entry) => (
-                <tr key={entry.id}>
+              {records.map(record => (
+                <tr key={record.id}>
+                  <td>{formatDate(record.bake_date)}</td>
                   <td>
-                    {formatDate(entry.production_date)}
-                    {entry.location_name && (
-                      <span className="sub-text"> @ {entry.location_name}</span>
-                    )}
+                    {record.order_id
+                      ? `${record.first_name} ${record.last_name}`
+                      : <span className="extra-label">Extra</span>}
                   </td>
-                  <td>{entry.flavor_name}</td>
-                  <td>{entry.quantity}</td>
+                  <td>{record.flavor_name}</td>
+                  <td className="text-center">{record.quantity}</td>
                   <td>
                     <span
-                      className="disposition-badge"
+                      className="status-badge"
                       style={{
-                        background: `${DISPOSITION_COLORS[entry.disposition]}20`,
-                        color: DISPOSITION_COLORS[entry.disposition],
+                        background: `${STATUS_COLORS[record.status]}20`,
+                        color: STATUS_COLORS[record.status],
                       }}
                     >
-                      {DISPOSITION_LABELS[entry.disposition]}
+                      {STATUS_LABELS[record.status]}
                     </span>
                   </td>
                   <td>
-                    {entry.disposition === 'sold' && entry.total_revenue
-                      ? formatCurrency(entry.total_revenue)
+                    {record.status === 'sold' && record.sale_price
+                      ? formatCurrency(record.sale_price * record.quantity)
                       : '-'}
                   </td>
-                  <td className="notes-cell">{entry.notes || '-'}</td>
                   <td>
                     <button
-                      className="btn btn-small btn-secondary"
-                      onClick={() => openEditModal(entry)}
+                      className="btn btn-sm btn-secondary"
+                      onClick={() => openEditModal(record)}
                     >
                       Edit
                     </button>
-                    <button
-                      className="btn btn-small"
-                      style={{ marginLeft: '4px', color: '#c62828' }}
-                      onClick={() => handleDelete(entry.id)}
-                    >
-                      Delete
-                    </button>
+                    {record.quantity > 1 && (
+                      <button
+                        className="btn btn-sm btn-secondary"
+                        onClick={() => openSplitModal(record)}
+                        style={{ marginLeft: '4px' }}
+                      >
+                        Split
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
-        )}
-      </div>
+        </div>
+      )}
 
-      {/* Create/Edit Modal */}
-      {showModal && (
-        <div
-          className="modal-overlay"
-          onMouseDown={(e) => e.stopPropagation()}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div
-            className="modal"
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={(e) => e.stopPropagation()}
-          >
+      {/* Edit Status Modal */}
+      {editingRecord && (
+        <div className="modal-overlay">
+          <div className="modal">
             <div className="modal-header">
-              <h2 className="modal-title">
-                {editingEntry ? 'Edit Entry' : 'Log Extra Production'}
-              </h2>
-              <button className="modal-close" onClick={() => setShowModal(false)}>
-                ×
+              <h2 className="modal-title">Edit Production Record</h2>
+              <button className="modal-close" onClick={() => setEditingRecord(null)}>
+                &times;
               </button>
             </div>
-            <form onSubmit={handleSubmit}>
-              <div className="modal-body">
-                {/* Link Type */}
-                <div className="form-group">
-                  <label className="form-label">Link to</label>
-                  <div className="radio-group">
-                    <label className="radio-label">
-                      <input
-                        type="radio"
-                        checked={formLinkType === 'slot'}
-                        onChange={() => setFormLinkType('slot')}
-                      />
-                      Pick Up Day
-                    </label>
-                    <label className="radio-label">
-                      <input
-                        type="radio"
-                        checked={formLinkType === 'date'}
-                        onChange={() => setFormLinkType('date')}
-                      />
-                      Standalone Date
-                    </label>
-                  </div>
-                </div>
+            <div className="modal-body">
+              <div className="edit-info">
+                <strong>{editingRecord.flavor_name}</strong> × {editingRecord.quantity}
+              </div>
 
-                {/* Pick Up Day or Date */}
-                {formLinkType === 'slot' ? (
-                  <div className="form-group">
-                    <label className="form-label">Pick Up Day</label>
-                    <select
-                      className="form-select"
-                      value={formBakeSlotId}
-                      onChange={(e) => setFormBakeSlotId(e.target.value)}
-                      required
-                    >
-                      <option value="">Select a pick up day...</option>
-                      {bakeSlots
-                        .filter((slot) => slot.date <= new Date().toISOString().split('T')[0])
-                        .map((slot) => (
-                          <option key={slot.id} value={slot.id}>
-                            {formatDate(slot.date)} - {slot.location_name}
-                          </option>
-                        ))}
-                    </select>
-                    <p className="form-hint">Only past and today's pick up days are available.</p>
-                  </div>
-                ) : (
-                  <div className="form-group">
-                    <label className="form-label">Production Date</label>
-                    <input
-                      type="date"
-                      className="form-input"
-                      value={formProductionDate}
-                      onChange={(e) => {
-                        const today = new Date().toISOString().split('T')[0];
-                        if (e.target.value > today) {
-                          setFormProductionDate(today);
-                        } else {
-                          setFormProductionDate(e.target.value);
-                        }
+              <div className="form-group">
+                <label className="form-label">Status</label>
+                <div className="status-buttons">
+                  {STATUS_OPTIONS.map(s => (
+                    <button
+                      key={s}
+                      type="button"
+                      className={`status-btn ${editStatus === s ? 'active' : ''}`}
+                      style={{
+                        borderColor: STATUS_COLORS[s],
+                        background: editStatus === s ? STATUS_COLORS[s] : 'transparent',
+                        color: editStatus === s ? '#fff' : STATUS_COLORS[s],
                       }}
-                      max={new Date().toISOString().split('T')[0]}
-                      required
+                      onClick={() => setEditStatus(s)}
+                    >
+                      {STATUS_LABELS[s]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {editStatus === 'sold' && (
+                <div className="form-group">
+                  <label className="form-label">Sale Price (per loaf)</label>
+                  <div className="input-with-prefix">
+                    <span className="input-prefix">$</span>
+                    <input
+                      type="number"
+                      className="form-input"
+                      value={editSalePrice}
+                      onChange={e => setEditSalePrice(parseFloat(e.target.value) || 0)}
+                      step="0.01"
+                      min="0"
                     />
-                    <p className="form-hint">Cannot log production for future dates.</p>
                   </div>
-                )}
-
-                {/* Flavor */}
-                <div className="form-group">
-                  <label className="form-label">Flavor</label>
-                  <select
-                    className="form-select"
-                    value={formFlavorId}
-                    onChange={(e) => setFormFlavorId(e.target.value)}
-                    required
-                  >
-                    <option value="">Select a flavor...</option>
-                    {flavors.filter((f) => f.is_active).map((flavor) => (
-                      <option key={flavor.id} value={flavor.id}>
-                        {flavor.name}
-                      </option>
-                    ))}
-                  </select>
+                  <p className="form-hint">
+                    Total: {formatCurrency(editingRecord.quantity * editSalePrice)}
+                  </p>
                 </div>
+              )}
 
-                {/* Quantity */}
-                <div className="form-group">
-                  <label className="form-label">Quantity (loaves)</label>
-                  <input
-                    type="number"
-                    className="form-input"
-                    value={formQuantity}
-                    onChange={(e) => setFormQuantity(parseInt(e.target.value) || 1)}
-                    min={1}
-                    required
-                  />
-                </div>
-
-                {/* Disposition */}
-                <div className="form-group">
-                  <label className="form-label">Disposition</label>
-                  <div className="disposition-buttons">
-                    {DISPOSITIONS.map((d) => (
-                      <button
-                        key={d}
-                        type="button"
-                        className={`disposition-btn ${formDisposition === d ? 'active' : ''}`}
-                        style={{
-                          borderColor: DISPOSITION_COLORS[d],
-                          background: formDisposition === d ? DISPOSITION_COLORS[d] : 'transparent',
-                          color: formDisposition === d ? '#fff' : DISPOSITION_COLORS[d],
-                        }}
-                        onClick={() => setFormDisposition(d)}
-                      >
-                        {DISPOSITION_LABELS[d]}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Sale Price (only for sold) */}
-                {formDisposition === 'sold' && (
-                  <div className="form-group">
-                    <label className="form-label">Sale Price (per loaf)</label>
-                    <div className="input-with-prefix">
-                      <span className="input-prefix">$</span>
-                      <input
-                        type="number"
-                        className="form-input"
-                        value={formSalePrice}
-                        onChange={(e) => setFormSalePrice(parseFloat(e.target.value) || 0)}
-                        step="0.01"
-                        min={0}
-                      />
-                    </div>
-                    <p className="form-hint">
-                      Total: {formatCurrency(formQuantity * formSalePrice)}
-                    </p>
-                  </div>
-                )}
-
-                {/* Notes */}
-                <div className="form-group">
-                  <label className="form-label">Notes (optional)</label>
-                  <textarea
-                    className="form-textarea"
-                    value={formNotes}
-                    onChange={(e) => setFormNotes(e.target.value)}
-                    placeholder={
-                      formDisposition === 'gifted'
-                        ? 'e.g., Given to neighbor'
-                        : formDisposition === 'wasted'
-                          ? 'e.g., Over-proofed'
-                          : ''
-                    }
-                    rows={2}
-                  />
-                </div>
+              <div className="form-group">
+                <label className="form-label">Notes</label>
+                <textarea
+                  className="form-textarea"
+                  value={editNotes}
+                  onChange={e => setEditNotes(e.target.value)}
+                  rows={2}
+                />
               </div>
-              <div className="modal-footer">
-                <button
-                  type="button"
-                  className="btn btn-secondary"
-                  onClick={() => setShowModal(false)}
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setEditingRecord(null)}>
+                Cancel
+              </button>
+              <button className="btn btn-primary" onClick={handleSaveEdit}>
+                Save Changes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Split Modal */}
+      {splittingRecord && (
+        <div className="modal-overlay">
+          <div className="modal">
+            <div className="modal-header">
+              <h2 className="modal-title">Split Production Record</h2>
+              <button className="modal-close" onClick={() => setSplittingRecord(null)}>
+                &times;
+              </button>
+            </div>
+            <div className="modal-body">
+              <div className="edit-info">
+                Splitting <strong>{splittingRecord.flavor_name}</strong> ({splittingRecord.quantity} loaves)
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Split off how many loaves?</label>
+                <input
+                  type="number"
+                  className="form-input"
+                  value={splitQuantity}
+                  onChange={e => setSplitQuantity(parseInt(e.target.value) || 1)}
+                  min="1"
+                  max={splittingRecord.quantity - 1}
+                />
+                <p className="form-hint">
+                  Will create: {splittingRecord.quantity - splitQuantity} loaves (original) + {splitQuantity} loaves (new)
+                </p>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Status for split-off loaves</label>
+                <select
+                  className="form-select"
+                  value={splitStatus}
+                  onChange={e => setSplitStatus(e.target.value as ProductionStatus)}
                 >
-                  Cancel
-                </button>
-                <button type="submit" className="btn btn-primary">
-                  {editingEntry ? 'Save Changes' : 'Log Entry'}
-                </button>
+                  {STATUS_OPTIONS.map(s => (
+                    <option key={s} value={s}>{STATUS_LABELS[s]}</option>
+                  ))}
+                </select>
               </div>
-            </form>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setSplittingRecord(null)}>
+                Cancel
+              </button>
+              <button
+                className="btn btn-primary"
+                onClick={handleSplit}
+                disabled={splitQuantity < 1 || splitQuantity >= splittingRecord.quantity}
+              >
+                Split Record
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Payment Edit Modal */}
+      {editingPayment && (
+        <div className="modal-overlay">
+          <div className="modal">
+            <div className="modal-header">
+              <h2 className="modal-title">Edit Payment</h2>
+              <button className="modal-close" onClick={() => setEditingPayment(null)}>
+                &times;
+              </button>
+            </div>
+            <div className="modal-body">
+              <div className="edit-info">
+                <strong>{editingPayment.customerName}</strong>
+                <br />
+                Order Total: {formatCurrency(editingPayment.totalAmount)}
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Payment Status</label>
+                <select
+                  className="form-select"
+                  value={paymentStatus}
+                  onChange={e => setPaymentStatus(e.target.value)}
+                >
+                  {PAYMENT_STATUSES.map(s => (
+                    <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Payment Method</label>
+                <select
+                  className="form-select"
+                  value={paymentMethod}
+                  onChange={e => setPaymentMethod(e.target.value)}
+                >
+                  <option value="">Not specified</option>
+                  {PAYMENT_METHODS.map(m => (
+                    <option key={m} value={m}>{m.charAt(0).toUpperCase() + m.slice(1)}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-secondary" onClick={() => setEditingPayment(null)}>
+                Cancel
+              </button>
+              <button className="btn btn-primary" onClick={handleSavePayment}>
+                Save Payment
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -618,33 +815,55 @@ function ProductionPage() {
           align-items: center;
           margin-bottom: 24px;
         }
-        .production-page .header-actions {
+        .header-actions {
           display: flex;
           gap: 12px;
           align-items: center;
         }
+        .view-toggle {
+          display: flex;
+          border: 1px solid var(--medium-gray);
+          border-radius: 6px;
+          overflow: hidden;
+        }
+        .toggle-btn {
+          padding: 8px 16px;
+          border: none;
+          background: white;
+          cursor: pointer;
+          font-size: 0.875rem;
+        }
+        .toggle-btn.active {
+          background: var(--primary-green);
+          color: white;
+        }
+        .toggle-btn:not(:last-child) {
+          border-right: 1px solid var(--medium-gray);
+        }
         .stats-grid {
           display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-          gap: 16px;
+          grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+          gap: 12px;
           margin-bottom: 24px;
         }
         .stat-card {
-          background: var(--white);
+          background: white;
           border-radius: 8px;
-          padding: 20px;
+          padding: 16px;
           text-align: center;
           box-shadow: 0 1px 3px rgba(0,0,0,0.1);
         }
         .stat-value {
-          font-size: 2rem;
+          font-size: 1.5rem;
           font-weight: 600;
-          font-family: var(--font-heading);
         }
         .stat-label {
-          font-size: 0.875rem;
+          font-size: 0.75rem;
           color: var(--text-gray);
           margin-top: 4px;
+        }
+        .filters-card {
+          margin-bottom: 16px;
         }
         .filters-row {
           display: flex;
@@ -659,40 +878,113 @@ function ProductionPage() {
           font-size: 0.75rem;
           color: var(--text-gray);
         }
-        .disposition-badge {
+        .order-groups {
+          display: flex;
+          flex-direction: column;
+        }
+        .order-group {
+          border-bottom: 1px solid #e5e7eb;
+          padding: 16px;
+        }
+        .order-group:last-child {
+          border-bottom: none;
+        }
+        .order-group-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 12px;
+        }
+        .order-info {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+        }
+        .order-email {
+          font-size: 0.75rem;
+          color: var(--text-gray);
+        }
+        .order-payment {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+        }
+        .payment-badge {
+          padding: 4px 10px;
+          border-radius: 4px;
+          font-size: 0.75rem;
+          font-weight: 500;
+          text-transform: uppercase;
+        }
+        .payment-badge.pending {
+          background: #fef3c7;
+          color: #92400e;
+        }
+        .payment-badge.paid {
+          background: #d1fae5;
+          color: #065f46;
+        }
+        .payment-badge.refunded {
+          background: #fee2e2;
+          color: #991b1b;
+        }
+        .payment-badge.voided {
+          background: #f3f4f6;
+          color: #6b7280;
+        }
+        .payment-method {
+          font-size: 0.75rem;
+          color: var(--text-gray);
+        }
+        .order-total {
+          font-weight: 600;
+        }
+        .nested-table {
+          margin: 0;
+        }
+        .inline-select {
+          padding: 4px 8px;
+          font-size: 0.875rem;
+          min-width: 120px;
+        }
+        .extras-section {
+          padding: 16px;
+          border-bottom: 1px solid #e5e7eb;
+        }
+        .extras-section:last-child {
+          border-bottom: none;
+        }
+        .section-date {
+          font-size: 0.875rem;
+          color: var(--primary-green);
+          margin-bottom: 12px;
+        }
+        .extra-label {
+          background: #f3f4f6;
+          color: #6b7280;
+          padding: 2px 8px;
+          border-radius: 4px;
+          font-size: 0.75rem;
+        }
+        .status-badge {
           display: inline-block;
           padding: 4px 10px;
           border-radius: 4px;
           font-size: 0.8rem;
           font-weight: 500;
         }
-        .sub-text {
-          font-size: 0.75rem;
-          color: var(--text-gray);
-          display: block;
+        .edit-info {
+          background: #f3f4f6;
+          padding: 12px;
+          border-radius: 6px;
+          margin-bottom: 16px;
         }
-        .notes-cell {
-          max-width: 200px;
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-        }
-        .radio-group {
+        .status-buttons {
           display: flex;
-          gap: 20px;
-        }
-        .radio-label {
-          display: flex;
-          align-items: center;
-          gap: 6px;
-          cursor: pointer;
-        }
-        .disposition-buttons {
-          display: flex;
-          gap: 8px;
           flex-wrap: wrap;
+          gap: 8px;
         }
-        .disposition-btn {
+        .status-btn {
           padding: 8px 16px;
           border: 2px solid;
           border-radius: 6px;
@@ -719,6 +1011,11 @@ function ProductionPage() {
           font-size: 0.8rem;
           color: var(--text-gray);
           margin-top: 4px;
+        }
+        .empty-hint {
+          font-size: 0.875rem;
+          color: var(--text-gray);
+          margin-top: 8px;
         }
       `}</style>
     </div>

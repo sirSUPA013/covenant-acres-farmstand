@@ -129,7 +129,7 @@ function recordLoginSuccess(): void {
 }
 
 // Input validation for financial and status fields
-const VALID_ORDER_STATUSES = new Set(['submitted', 'confirmed', 'ready', 'picked_up', 'canceled', 'no_show']);
+const VALID_ORDER_STATUSES = new Set(['submitted', 'confirmed', 'scheduled', 'baked', 'ready', 'picked_up', 'canceled', 'no_show']);
 const VALID_PAYMENT_STATUSES = new Set(['pending', 'paid', 'refunded', 'voided']);
 const VALID_PAYMENT_METHODS = new Set(['cash', 'venmo', 'cashapp', 'zelle', 'credit', 'other']);
 const MAX_ORDER_AMOUNT = 10000;
@@ -200,7 +200,8 @@ const ALLOWED_FLAVOR_FIELDS = new Set([
 // Recipe fields use camelCase in API but snake_case in DB
 const ALLOWED_RECIPE_FIELDS = new Set([
   'name', 'flavorId', 'baseIngredients', 'foldIngredients', 'laminationIngredients',
-  'steps', 'yieldsLoaves', 'loafSize', 'notes', 'season', 'source'
+  'steps', 'yieldsLoaves', 'loafSize', 'notes', 'season', 'source',
+  'prepTimeMinutes', 'bakeTimeMinutes', 'bakeTemp', 'prepInstructions', 'bakeInstructions'
 ]);
 
 // Helper to filter and validate fields for UPDATE operations
@@ -471,7 +472,35 @@ export function setupIpcHandlers(): void {
       `UPDATE customers SET credit_balance = credit_balance + ?, updated_at = ? WHERE id = ?`
     ).run(amount, now, id);
 
+    // Log to audit trail for credit history
+    logAudit('CREDIT_ISSUED', 'customers', id, JSON.stringify({ amount, reason }));
     log('info', 'Credit issued', { customerId: id, amount, reason });
+  });
+
+  // Get customer order history
+  ipcMain.handle('customers:getOrders', async (_event, customerId) => {
+    const db = getDb();
+    return db.prepare(`
+      SELECT o.*, bs.date as bake_date, l.name as location_name
+      FROM orders o
+      LEFT JOIN bake_slots bs ON o.bake_slot_id = bs.id
+      LEFT JOIN locations l ON o.pickup_location_id = l.id
+      WHERE o.customer_id = ?
+      ORDER BY o.created_at DESC
+    `).all(customerId);
+  });
+
+  // Get customer credit history from audit log
+  ipcMain.handle('customers:getCreditHistory', async (_event, customerId) => {
+    const db = getDb();
+    return db.prepare(`
+      SELECT id, user_name as issued_by, details, created_at
+      FROM audit_log
+      WHERE entity_type = 'customers'
+        AND entity_id = ?
+        AND action = 'CREDIT_ISSUED'
+      ORDER BY created_at DESC
+    `).all(customerId);
   });
 
   // Bake Slots
@@ -1000,12 +1029,17 @@ export function setupIpcHandlers(): void {
 
     const id = `ing-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
     const now = new Date().toISOString();
-    const costPerUnit = data.packagePrice / data.packageSize;
+
+    // For package types (can, jar, etc.), multiply by contents_size to get total amount
+    // E.g., 20 jars × 12 oz each = 240 oz total
+    const contentsSize = data.contentsSize || 0;
+    const totalAmount = contentsSize > 0 ? data.packageSize * contentsSize : data.packageSize;
+    const costPerUnit = data.packagePrice / totalAmount;
 
     db.prepare(`
-      INSERT INTO ingredients (id, name, unit, cost_per_unit, package_price, package_size, package_unit, vendor, category, density_g_per_ml, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, data.name, data.unit, costPerUnit, data.packagePrice, data.packageSize, data.packageUnit || null, data.vendor || null, data.category || null, data.density || null, now, now);
+      INSERT INTO ingredients (id, name, unit, cost_per_unit, package_price, package_size, package_unit, contents_size, vendor, category, density_g_per_ml, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, data.name, data.unit, costPerUnit, data.packagePrice, data.packageSize, data.packageUnit || null, contentsSize, data.vendor || null, data.category || null, data.density || null, now, now);
 
     log('info', 'Ingredient created', { id, name: data.name });
     return { id };
@@ -1020,14 +1054,17 @@ export function setupIpcHandlers(): void {
       throw new Error('Package size must be greater than zero');
     }
 
-    const costPerUnit = data.packagePrice / data.packageSize;
+    // For package types (can, jar, etc.), multiply by contents_size to get total amount
+    const contentsSize = data.contentsSize || 0;
+    const totalAmount = contentsSize > 0 ? data.packageSize * contentsSize : data.packageSize;
+    const costPerUnit = data.packagePrice / totalAmount;
 
     db.prepare(`
       UPDATE ingredients
       SET name = ?, unit = ?, cost_per_unit = ?, package_price = ?, package_size = ?,
-          package_unit = ?, vendor = ?, category = ?, density_g_per_ml = ?, updated_at = ?
+          package_unit = ?, contents_size = ?, vendor = ?, category = ?, density_g_per_ml = ?, updated_at = ?
       WHERE id = ?
-    `).run(data.name, data.unit, costPerUnit, data.packagePrice, data.packageSize, data.packageUnit || null, data.vendor || null, data.category || null, data.density || null, new Date().toISOString(), id);
+    `).run(data.name, data.unit, costPerUnit, data.packagePrice, data.packageSize, data.packageUnit || null, contentsSize, data.vendor || null, data.category || null, data.density || null, new Date().toISOString(), id);
 
     log('info', 'Ingredient updated', { id, name: data.name });
   });
@@ -2236,6 +2273,629 @@ export function setupIpcHandlers(): void {
     }
 
     return totals;
+  });
+
+  // ========================================
+  // PREP SHEETS (new production workflow)
+  // ========================================
+
+  // Get all prep sheets with summary info
+  ipcMain.handle('prepSheets:getAll', async (_event, filters) => {
+    const db = getDb();
+    let query = `
+      SELECT ps.*,
+             au.name as completed_by_name,
+             (SELECT COUNT(*) FROM prep_sheet_items WHERE prep_sheet_id = ps.id AND order_id IS NOT NULL) as order_count,
+             (SELECT COUNT(*) FROM prep_sheet_items WHERE prep_sheet_id = ps.id AND order_id IS NULL) as extra_count,
+             (SELECT SUM(planned_quantity) FROM prep_sheet_items WHERE prep_sheet_id = ps.id) as total_loaves
+      FROM prep_sheets ps
+      LEFT JOIN admin_users au ON ps.completed_by = au.id
+      WHERE 1=1
+    `;
+    const params: unknown[] = [];
+
+    if (filters?.status) {
+      query += ' AND ps.status = ?';
+      params.push(filters.status);
+    }
+    if (filters?.dateFrom) {
+      query += ' AND ps.bake_date >= ?';
+      params.push(filters.dateFrom);
+    }
+    if (filters?.dateTo) {
+      query += ' AND ps.bake_date <= ?';
+      params.push(filters.dateTo);
+    }
+
+    query += ' ORDER BY ps.bake_date DESC';
+    return db.prepare(query).all(...params);
+  });
+
+  // Get single prep sheet with full details
+  ipcMain.handle('prepSheets:get', async (_event, id) => {
+    const db = getDb();
+
+    const prepSheet = db.prepare(`
+      SELECT ps.*, au.name as completed_by_name
+      FROM prep_sheets ps
+      LEFT JOIN admin_users au ON ps.completed_by = au.id
+      WHERE ps.id = ?
+    `).get(id);
+
+    if (!prepSheet) return null;
+
+    // Get items with order and flavor details
+    const items = db.prepare(`
+      SELECT psi.*,
+             f.name as flavor_name,
+             o.id as order_id,
+             c.first_name, c.last_name, c.email
+      FROM prep_sheet_items psi
+      LEFT JOIN flavors f ON psi.flavor_id = f.id
+      LEFT JOIN orders o ON psi.order_id = o.id
+      LEFT JOIN customers c ON o.customer_id = c.id
+      WHERE psi.prep_sheet_id = ?
+      ORDER BY psi.order_id IS NULL, c.last_name, c.first_name, f.name
+    `).all(id);
+
+    return { ...prepSheet, items };
+  });
+
+  // Create new prep sheet
+  ipcMain.handle('prepSheets:create', async (_event, data) => {
+    requireAuth('prepSheets:create');
+    const db = getDb();
+    const id = `ps-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+    const now = new Date().toISOString();
+
+    db.prepare(`
+      INSERT INTO prep_sheets (id, bake_date, status, notes, created_at, updated_at)
+      VALUES (?, ?, 'draft', ?, ?, ?)
+    `).run(id, data.bakeDate, data.notes || null, now, now);
+
+    logAudit('PREP_SHEET_CREATED', 'prep_sheets', id, JSON.stringify({ bakeDate: data.bakeDate }));
+    log('info', 'Prep sheet created', { id, bakeDate: data.bakeDate });
+
+    return { id };
+  });
+
+  // Update prep sheet (notes, bake date)
+  ipcMain.handle('prepSheets:update', async (_event, id, data) => {
+    requireAuth('prepSheets:update');
+    const db = getDb();
+    const updates: string[] = [];
+    const values: unknown[] = [];
+
+    if (data.bakeDate !== undefined) {
+      updates.push('bake_date = ?');
+      values.push(data.bakeDate);
+    }
+    if (data.notes !== undefined) {
+      updates.push('notes = ?');
+      values.push(data.notes);
+    }
+
+    if (updates.length === 0) return;
+
+    updates.push('updated_at = ?');
+    values.push(new Date().toISOString());
+    values.push(id);
+
+    db.prepare(`UPDATE prep_sheets SET ${updates.join(', ')} WHERE id = ?`).run(...values);
+    log('info', 'Prep sheet updated', { id, changes: data });
+  });
+
+  // Delete prep sheet (only if draft)
+  ipcMain.handle('prepSheets:delete', async (_event, id) => {
+    requireAuth('prepSheets:delete');
+    const db = getDb();
+
+    const prepSheet = db.prepare('SELECT status FROM prep_sheets WHERE id = ?').get(id) as { status: string } | undefined;
+    if (!prepSheet) throw new Error('Prep sheet not found');
+    if (prepSheet.status !== 'draft') throw new Error('Can only delete draft prep sheets');
+
+    // Remove any 'scheduled' status from orders
+    db.prepare(`
+      UPDATE orders SET status = 'submitted', updated_at = ?
+      WHERE id IN (SELECT order_id FROM prep_sheet_items WHERE prep_sheet_id = ? AND order_id IS NOT NULL)
+      AND status = 'scheduled'
+    `).run(new Date().toISOString(), id);
+
+    // Delete items (cascade should handle this, but be explicit)
+    db.prepare('DELETE FROM prep_sheet_items WHERE prep_sheet_id = ?').run(id);
+    db.prepare('DELETE FROM prep_sheets WHERE id = ?').run(id);
+
+    logAudit('PREP_SHEET_DELETED', 'prep_sheets', id);
+    log('info', 'Prep sheet deleted', { id });
+    return { success: true };
+  });
+
+  // Add order to prep sheet
+  ipcMain.handle('prepSheets:addOrder', async (_event, prepSheetId, orderId) => {
+    requireAuth('prepSheets:addOrder');
+    const db = getDb();
+
+    // Verify prep sheet is draft
+    const prepSheet = db.prepare('SELECT status FROM prep_sheets WHERE id = ?').get(prepSheetId) as { status: string } | undefined;
+    if (!prepSheet) throw new Error('Prep sheet not found');
+    if (prepSheet.status !== 'draft') throw new Error('Can only modify draft prep sheets');
+
+    // Get order items
+    const order = db.prepare('SELECT items FROM orders WHERE id = ?').get(orderId) as { items: string } | undefined;
+    if (!order) throw new Error('Order not found');
+
+    const items = JSON.parse(order.items) as Array<{ flavorId: string; quantity: number }>;
+    const now = new Date().toISOString();
+
+    // Add each item from the order
+    const insertStmt = db.prepare(`
+      INSERT INTO prep_sheet_items (id, prep_sheet_id, order_id, flavor_id, planned_quantity, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    for (const item of items) {
+      const itemId = `psi-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+      insertStmt.run(itemId, prepSheetId, orderId, item.flavorId, item.quantity, now, now);
+    }
+
+    // Update order status to 'scheduled'
+    db.prepare(`UPDATE orders SET status = 'scheduled', updated_at = ? WHERE id = ?`).run(now, orderId);
+
+    // Update prep sheet timestamp
+    db.prepare('UPDATE prep_sheets SET updated_at = ? WHERE id = ?').run(now, prepSheetId);
+
+    logAudit('ORDER_ADDED_TO_PREP_SHEET', 'prep_sheets', prepSheetId, JSON.stringify({ orderId }));
+    log('info', 'Order added to prep sheet', { prepSheetId, orderId });
+  });
+
+  // Remove order from prep sheet
+  ipcMain.handle('prepSheets:removeOrder', async (_event, prepSheetId, orderId) => {
+    requireAuth('prepSheets:removeOrder');
+    const db = getDb();
+
+    // Verify prep sheet is draft
+    const prepSheet = db.prepare('SELECT status FROM prep_sheets WHERE id = ?').get(prepSheetId) as { status: string } | undefined;
+    if (!prepSheet) throw new Error('Prep sheet not found');
+    if (prepSheet.status !== 'draft') throw new Error('Can only modify draft prep sheets');
+
+    const now = new Date().toISOString();
+
+    // Remove items for this order
+    db.prepare('DELETE FROM prep_sheet_items WHERE prep_sheet_id = ? AND order_id = ?').run(prepSheetId, orderId);
+
+    // Revert order status
+    db.prepare(`UPDATE orders SET status = 'submitted', updated_at = ? WHERE id = ?`).run(now, orderId);
+
+    // Update prep sheet timestamp
+    db.prepare('UPDATE prep_sheets SET updated_at = ? WHERE id = ?').run(now, prepSheetId);
+
+    log('info', 'Order removed from prep sheet', { prepSheetId, orderId });
+  });
+
+  // Add extra loaves to prep sheet
+  ipcMain.handle('prepSheets:addExtra', async (_event, prepSheetId, flavorId, quantity) => {
+    requireAuth('prepSheets:addExtra');
+    const db = getDb();
+
+    // Verify prep sheet is draft
+    const prepSheet = db.prepare('SELECT status FROM prep_sheets WHERE id = ?').get(prepSheetId) as { status: string } | undefined;
+    if (!prepSheet) throw new Error('Prep sheet not found');
+    if (prepSheet.status !== 'draft') throw new Error('Can only modify draft prep sheets');
+
+    const now = new Date().toISOString();
+    const itemId = `psi-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+
+    db.prepare(`
+      INSERT INTO prep_sheet_items (id, prep_sheet_id, order_id, flavor_id, planned_quantity, created_at, updated_at)
+      VALUES (?, ?, NULL, ?, ?, ?, ?)
+    `).run(itemId, prepSheetId, flavorId, quantity, now, now);
+
+    db.prepare('UPDATE prep_sheets SET updated_at = ? WHERE id = ?').run(now, prepSheetId);
+
+    log('info', 'Extra added to prep sheet', { prepSheetId, flavorId, quantity });
+    return { id: itemId };
+  });
+
+  // Remove extra from prep sheet
+  ipcMain.handle('prepSheets:removeExtra', async (_event, itemId) => {
+    requireAuth('prepSheets:removeExtra');
+    const db = getDb();
+
+    const item = db.prepare(`
+      SELECT psi.prep_sheet_id, ps.status
+      FROM prep_sheet_items psi
+      JOIN prep_sheets ps ON psi.prep_sheet_id = ps.id
+      WHERE psi.id = ? AND psi.order_id IS NULL
+    `).get(itemId) as { prep_sheet_id: string; status: string } | undefined;
+
+    if (!item) throw new Error('Extra item not found');
+    if (item.status !== 'draft') throw new Error('Can only modify draft prep sheets');
+
+    db.prepare('DELETE FROM prep_sheet_items WHERE id = ?').run(itemId);
+    db.prepare('UPDATE prep_sheets SET updated_at = ? WHERE id = ?').run(new Date().toISOString(), item.prep_sheet_id);
+
+    log('info', 'Extra removed from prep sheet', { itemId });
+  });
+
+  // Update extra quantity
+  ipcMain.handle('prepSheets:updateExtra', async (_event, itemId, quantity) => {
+    requireAuth('prepSheets:updateExtra');
+    const db = getDb();
+
+    const item = db.prepare(`
+      SELECT psi.prep_sheet_id, ps.status
+      FROM prep_sheet_items psi
+      JOIN prep_sheets ps ON psi.prep_sheet_id = ps.id
+      WHERE psi.id = ? AND psi.order_id IS NULL
+    `).get(itemId) as { prep_sheet_id: string; status: string } | undefined;
+
+    if (!item) throw new Error('Extra item not found');
+    if (item.status !== 'draft') throw new Error('Can only modify draft prep sheets');
+
+    const now = new Date().toISOString();
+    db.prepare('UPDATE prep_sheet_items SET planned_quantity = ?, updated_at = ? WHERE id = ?').run(quantity, now, itemId);
+    db.prepare('UPDATE prep_sheets SET updated_at = ? WHERE id = ?').run(now, item.prep_sheet_id);
+
+    log('info', 'Extra quantity updated', { itemId, quantity });
+  });
+
+  // Get orders available to add to a prep sheet
+  ipcMain.handle('prepSheets:getAvailableOrders', async (_event, bakeDate) => {
+    const db = getDb();
+
+    // Get orders for the bake date that aren't already on a prep sheet
+    return db.prepare(`
+      SELECT o.*, c.first_name, c.last_name, c.email, c.phone,
+             bs.date as bake_date, l.name as location_name
+      FROM orders o
+      JOIN customers c ON o.customer_id = c.id
+      JOIN bake_slots bs ON o.bake_slot_id = bs.id
+      LEFT JOIN locations l ON o.pickup_location_id = l.id
+      WHERE bs.date = ?
+      AND o.status IN ('submitted', 'confirmed')
+      AND o.id NOT IN (SELECT order_id FROM prep_sheet_items WHERE order_id IS NOT NULL)
+      ORDER BY c.last_name, c.first_name
+    `).all(bakeDate);
+  });
+
+  // Complete prep sheet - creates production records
+  ipcMain.handle('prepSheets:complete', async (_event, prepSheetId, actualQuantities) => {
+    requireAuth('prepSheets:complete');
+    const db = getDb();
+
+    const prepSheet = db.prepare('SELECT * FROM prep_sheets WHERE id = ?').get(prepSheetId) as { id: string; status: string } | undefined;
+    if (!prepSheet) throw new Error('Prep sheet not found');
+    if (prepSheet.status !== 'draft') throw new Error('Prep sheet already completed');
+
+    const now = new Date().toISOString();
+
+    // Get all items
+    const items = db.prepare('SELECT * FROM prep_sheet_items WHERE prep_sheet_id = ?').all(prepSheetId) as Array<{
+      id: string;
+      order_id: string | null;
+      flavor_id: string;
+      planned_quantity: number;
+    }>;
+
+    // Start transaction
+    const completeSheet = db.transaction(() => {
+      // Update actual quantities on prep sheet items
+      const updateItemStmt = db.prepare('UPDATE prep_sheet_items SET actual_quantity = ?, updated_at = ? WHERE id = ?');
+
+      // Create production records
+      const insertProductionStmt = db.prepare(`
+        INSERT INTO production (id, prep_sheet_id, order_id, flavor_id, quantity, status, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)
+      `);
+
+      for (const item of items) {
+        // Use provided actual quantity or fall back to planned
+        const actualQty = actualQuantities?.[item.id] ?? item.planned_quantity;
+
+        // Update prep sheet item
+        updateItemStmt.run(actualQty, now, item.id);
+
+        // Create production record
+        const prodId = `prod-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+        insertProductionStmt.run(prodId, prepSheetId, item.order_id, item.flavor_id, actualQty, now, now);
+      }
+
+      // Update order statuses to 'baked'
+      db.prepare(`
+        UPDATE orders SET status = 'baked', updated_at = ?
+        WHERE id IN (SELECT DISTINCT order_id FROM prep_sheet_items WHERE prep_sheet_id = ? AND order_id IS NOT NULL)
+      `).run(now, prepSheetId);
+
+      // Mark prep sheet complete
+      db.prepare(`
+        UPDATE prep_sheets SET status = 'completed', completed_at = ?, completed_by = ?, updated_at = ?
+        WHERE id = ?
+      `).run(now, currentUser?.id || null, now, prepSheetId);
+    });
+
+    completeSheet();
+
+    logAudit('PREP_SHEET_COMPLETED', 'prep_sheets', prepSheetId, JSON.stringify({ itemCount: items.length }));
+    log('info', 'Prep sheet completed', { prepSheetId, itemCount: items.length });
+    return { success: true };
+  });
+
+  // Generate prep sheet data (ingredients, instructions) - similar to old prepSheet:generate
+  ipcMain.handle('prepSheets:generateData', async (_event, prepSheetId) => {
+    const db = getDb();
+
+    const prepSheet = db.prepare('SELECT * FROM prep_sheets WHERE id = ?').get(prepSheetId) as Record<string, unknown>;
+    if (!prepSheet) throw new Error('Prep sheet not found');
+
+    // Get items grouped by flavor
+    const items = db.prepare(`
+      SELECT flavor_id, SUM(planned_quantity) as total_quantity
+      FROM prep_sheet_items
+      WHERE prep_sheet_id = ?
+      GROUP BY flavor_id
+    `).all(prepSheetId) as Array<{ flavor_id: string; total_quantity: number }>;
+
+    const prepItems = [];
+
+    for (const item of items) {
+      const flavor = db.prepare('SELECT name FROM flavors WHERE id = ?').get(item.flavor_id) as { name: string } | undefined;
+      const recipe = db.prepare(`
+        SELECT r.* FROM recipes r
+        JOIN flavors f ON f.recipe_id = r.id
+        WHERE f.id = ?
+      `).get(item.flavor_id) as Record<string, unknown> | undefined;
+
+      if (recipe) {
+        const baseIngredients = JSON.parse(recipe.base_ingredients as string || '[]');
+        const foldIngredients = JSON.parse(recipe.fold_ingredients as string || '[]');
+        const laminationIngredients = JSON.parse(recipe.lamination_ingredients as string || '[]');
+        const steps = JSON.parse(recipe.steps as string || '[]');
+
+        const scaleIngredients = (ingredients: Array<{ name: string; quantity: number; unit: string }>) =>
+          ingredients.map((ing) => ({
+            name: ing.name,
+            totalQuantity: ing.quantity * item.total_quantity,
+            unit: ing.unit,
+          }));
+
+        prepItems.push({
+          flavorId: item.flavor_id,
+          flavorName: flavor?.name || 'Unknown',
+          quantity: item.total_quantity,
+          baseIngredients: scaleIngredients(baseIngredients),
+          foldIngredients: scaleIngredients(foldIngredients),
+          laminationIngredients: scaleIngredients(laminationIngredients),
+          steps,
+          prepInstructions: recipe.prep_instructions,
+          bakeInstructions: recipe.bake_instructions,
+          bakeTemp: recipe.bake_temp,
+          prepTimeMinutes: recipe.prep_time_minutes,
+          bakeTimeMinutes: recipe.bake_time_minutes,
+        });
+      } else {
+        prepItems.push({
+          flavorId: item.flavor_id,
+          flavorName: flavor?.name || 'Unknown',
+          quantity: item.total_quantity,
+          baseIngredients: [],
+          foldIngredients: [],
+          laminationIngredients: [],
+          steps: [],
+          noRecipe: true,
+        });
+      }
+    }
+
+    return {
+      prepSheetId,
+      bakeDate: prepSheet.bake_date,
+      status: prepSheet.status,
+      generatedAt: new Date().toISOString(),
+      items: prepItems,
+      totalLoaves: items.reduce((sum, i) => sum + i.total_quantity, 0),
+    };
+  });
+
+  // ========================================
+  // PRODUCTION (loaf tracking after baking)
+  // ========================================
+
+  // Get all production records with filtering
+  ipcMain.handle('production:getAll', async (_event, filters) => {
+    const db = getDb();
+    let query = `
+      SELECT p.*,
+             f.name as flavor_name,
+             ps.bake_date,
+             o.id as order_id,
+             c.first_name, c.last_name, c.email,
+             o.payment_status, o.payment_method, o.total_amount
+      FROM production p
+      JOIN prep_sheets ps ON p.prep_sheet_id = ps.id
+      JOIN flavors f ON p.flavor_id = f.id
+      LEFT JOIN orders o ON p.order_id = o.id
+      LEFT JOIN customers c ON o.customer_id = c.id
+      WHERE 1=1
+    `;
+    const params: unknown[] = [];
+
+    if (filters?.dateFrom) {
+      query += ' AND ps.bake_date >= ?';
+      params.push(filters.dateFrom);
+    }
+    if (filters?.dateTo) {
+      query += ' AND ps.bake_date <= ?';
+      params.push(filters.dateTo);
+    }
+    if (filters?.status) {
+      query += ' AND p.status = ?';
+      params.push(filters.status);
+    }
+    if (filters?.flavorId) {
+      query += ' AND p.flavor_id = ?';
+      params.push(filters.flavorId);
+    }
+    if (filters?.orderId) {
+      query += ' AND p.order_id = ?';
+      params.push(filters.orderId);
+    }
+    if (filters?.prepSheetId) {
+      query += ' AND p.prep_sheet_id = ?';
+      params.push(filters.prepSheetId);
+    }
+
+    query += ' ORDER BY ps.bake_date DESC, p.order_id IS NULL, c.last_name, c.first_name, f.name';
+    return db.prepare(query).all(...params);
+  });
+
+  // Get production record
+  ipcMain.handle('production:get', async (_event, id) => {
+    const db = getDb();
+    return db.prepare(`
+      SELECT p.*,
+             f.name as flavor_name,
+             ps.bake_date,
+             o.id as order_id,
+             c.first_name, c.last_name, c.email,
+             o.payment_status, o.payment_method, o.total_amount
+      FROM production p
+      JOIN prep_sheets ps ON p.prep_sheet_id = ps.id
+      JOIN flavors f ON p.flavor_id = f.id
+      LEFT JOIN orders o ON p.order_id = o.id
+      LEFT JOIN customers c ON o.customer_id = c.id
+      WHERE p.id = ?
+    `).get(id);
+  });
+
+  // Update production record (status, notes, sale_price)
+  ipcMain.handle('production:update', async (_event, id, data) => {
+    requireAuth('production:update');
+    const db = getDb();
+    const updates: string[] = [];
+    const values: unknown[] = [];
+
+    if (data.status !== undefined) {
+      const validStatuses = new Set(['pending', 'picked_up', 'sold', 'wasted', 'personal', 'gifted']);
+      if (!validStatuses.has(data.status)) throw new Error('Invalid production status');
+      updates.push('status = ?');
+      values.push(data.status);
+    }
+    if (data.salePrice !== undefined) {
+      updates.push('sale_price = ?');
+      values.push(data.salePrice);
+    }
+    if (data.notes !== undefined) {
+      updates.push('notes = ?');
+      values.push(data.notes);
+    }
+
+    if (updates.length === 0) return;
+
+    updates.push('updated_at = ?');
+    values.push(new Date().toISOString());
+    values.push(id);
+
+    db.prepare(`UPDATE production SET ${updates.join(', ')} WHERE id = ?`).run(...values);
+    log('info', 'Production record updated', { id, changes: data });
+  });
+
+  // Split a production line item
+  ipcMain.handle('production:split', async (_event, id, splitQuantity, newStatus) => {
+    requireAuth('production:split');
+    const db = getDb();
+
+    const prod = db.prepare('SELECT * FROM production WHERE id = ?').get(id) as {
+      id: string;
+      prep_sheet_id: string;
+      order_id: string | null;
+      flavor_id: string;
+      quantity: number;
+      status: string;
+    } | undefined;
+
+    if (!prod) throw new Error('Production record not found');
+    if (splitQuantity >= prod.quantity) throw new Error('Split quantity must be less than current quantity');
+    if (splitQuantity < 1) throw new Error('Split quantity must be at least 1');
+
+    const now = new Date().toISOString();
+
+    // Reduce original record quantity
+    const newOriginalQty = prod.quantity - splitQuantity;
+    db.prepare('UPDATE production SET quantity = ?, updated_at = ? WHERE id = ?').run(newOriginalQty, now, id);
+
+    // Create new record with split quantity and new status
+    const newId = `prod-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+    db.prepare(`
+      INSERT INTO production (id, prep_sheet_id, order_id, flavor_id, quantity, status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(newId, prod.prep_sheet_id, prod.order_id, prod.flavor_id, splitQuantity, newStatus, now, now);
+
+    logAudit('PRODUCTION_SPLIT', 'production', id, JSON.stringify({ newId, splitQuantity, newStatus }));
+    log('info', 'Production record split', { originalId: id, newId, splitQuantity, newStatus });
+
+    return { newId, originalQuantity: newOriginalQty };
+  });
+
+  // Update order payment from production tab
+  ipcMain.handle('production:updateOrderPayment', async (_event, orderId, paymentStatus, paymentMethod) => {
+    requireAuth('production:updateOrderPayment');
+    const db = getDb();
+
+    const validStatuses = new Set(['pending', 'paid', 'refunded', 'voided']);
+    const validMethods = new Set(['cash', 'venmo', 'cashapp', 'zelle', 'credit', 'other']);
+
+    if (!validStatuses.has(paymentStatus)) throw new Error('Invalid payment status');
+    if (paymentMethod && !validMethods.has(paymentMethod)) throw new Error('Invalid payment method');
+
+    const now = new Date().toISOString();
+    db.prepare(`
+      UPDATE orders SET payment_status = ?, payment_method = ?, updated_at = ?
+      WHERE id = ?
+    `).run(paymentStatus, paymentMethod || null, now, orderId);
+
+    logAudit('ORDER_PAYMENT_UPDATED_FROM_PRODUCTION', 'orders', orderId, JSON.stringify({ paymentStatus, paymentMethod }));
+    log('info', 'Order payment updated from production', { orderId, paymentStatus, paymentMethod });
+  });
+
+  // Get production analytics
+  ipcMain.handle('production:getAnalytics', async (_event, filters) => {
+    const db = getDb();
+    let whereClause = 'WHERE 1=1';
+    const params: unknown[] = [];
+
+    if (filters?.dateFrom) {
+      whereClause += ' AND ps.bake_date >= ?';
+      params.push(filters.dateFrom);
+    }
+    if (filters?.dateTo) {
+      whereClause += ' AND ps.bake_date <= ?';
+      params.push(filters.dateTo);
+    }
+
+    // Summary by status
+    const byStatus = db.prepare(`
+      SELECT p.status,
+             COUNT(*) as record_count,
+             SUM(p.quantity) as total_loaves,
+             SUM(CASE WHEN p.status = 'sold' THEN p.quantity * COALESCE(p.sale_price, 0) ELSE 0 END) as revenue
+      FROM production p
+      JOIN prep_sheets ps ON p.prep_sheet_id = ps.id
+      ${whereClause}
+      GROUP BY p.status
+    `).all(...params);
+
+    // Summary by order vs extra
+    const bySource = db.prepare(`
+      SELECT
+        CASE WHEN p.order_id IS NULL THEN 'extra' ELSE 'order' END as source,
+        SUM(p.quantity) as total_loaves
+      FROM production p
+      JOIN prep_sheets ps ON p.prep_sheet_id = ps.id
+      ${whereClause}
+      GROUP BY source
+    `).all(...params);
+
+    return { byStatus, bySource };
   });
 
   // Public settings (available without login - for lock screen branding)

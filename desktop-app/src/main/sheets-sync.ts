@@ -466,6 +466,19 @@ async function pushToSheets(): Promise<void> {
         'updated_at',
       ],
     },
+    // Public settings (payment options for order form)
+    {
+      table: 'settings',
+      sheet: 'PublicSettings',
+      columns: [
+        'id',
+        'enable_prepayment',
+        'venmo_username',
+        'cashapp_cashtag',
+        'paypal_username',
+        'zelle_email',
+      ],
+    },
   ];
 
   for (const { table, sheet, columns } of pushTables) {

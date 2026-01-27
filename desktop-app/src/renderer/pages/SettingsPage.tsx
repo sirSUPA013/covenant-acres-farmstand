@@ -90,7 +90,8 @@ function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-  const [activeSection, setActiveSection] = useState<'general' | 'time' | 'payment' | 'notifications' | 'integrations' | 'users' | 'activity'>('general');
+  const [activeSection, setActiveSection] = useState<'general' | 'time' | 'payment' | 'notifications' | 'integrations' | 'users' | 'activity' | 'help'>('general');
+  const [expandedGuide, setExpandedGuide] = useState<string | null>(null);
   const [syncStatus, setSyncStatus] = useState<{ lastSync: string | null; pendingChanges: number; isOnline: boolean }>({
     lastSync: null,
     pendingChanges: 0,
@@ -158,8 +159,8 @@ function SettingsPage() {
 
   async function loadAuditLog() {
     try {
-      const log = await window.api.getAuditLog({ limit: 100 });
-      setAuditLog(log as AuditEntry[]);
+      const response = await window.api.getAuditLog({ limit: 100 });
+      setAuditLog((response.data || []) as AuditEntry[]);
     } catch (error) {
       console.error('Failed to load audit log:', error);
     }
@@ -401,6 +402,13 @@ function SettingsPage() {
             onClick={() => setActiveSection('activity')}
           >
             Activity Log
+          </button>
+          <div style={{ borderTop: '1px solid #ddd', margin: '8px 0' }} />
+          <button
+            className={`settings-nav-item ${activeSection === 'help' ? 'active' : ''}`}
+            onClick={() => setActiveSection('help')}
+          >
+            Help & Guides
           </button>
         </div>
 
@@ -1110,6 +1118,407 @@ function SettingsPage() {
               </table>
             </div>
           )}
+
+          {/* Help & Guides */}
+          {activeSection === 'help' && (
+            <div className="card">
+              <div className="card-header">
+                <h2 className="card-title">Help & Guides</h2>
+              </div>
+              <p style={{ marginBottom: '16px', color: '#666' }}>
+                Click any section below to learn how to use that part of the system.
+              </p>
+
+              {/* Overview */}
+              <div className="guide-section">
+                <button
+                  className="guide-header"
+                  onClick={() => setExpandedGuide(expandedGuide === 'overview' ? null : 'overview')}
+                >
+                  <span>System Overview</span>
+                  <span>{expandedGuide === 'overview' ? '−' : '+'}</span>
+                </button>
+                {expandedGuide === 'overview' && (
+                  <div className="guide-content">
+                    <p><strong>Covenant Acres Farmstand</strong> helps you manage bread orders from start to finish:</p>
+                    <ol>
+                      <li><strong>Customers order</strong> through your online order form</li>
+                      <li><strong>You plan</strong> what to bake using the Prep Sheet</li>
+                      <li><strong>You track</strong> what was actually baked in Production</li>
+                      <li><strong>Customers pick up</strong> and you mark orders complete</li>
+                    </ol>
+                    <p style={{ marginTop: '12px' }}>The main tabs are:</p>
+                    <ul>
+                      <li><strong>Orders</strong> - See and manage all customer orders</li>
+                      <li><strong>Prep Sheet</strong> - Plan your bake days</li>
+                      <li><strong>Production</strong> - Track loaves after baking</li>
+                      <li><strong>Analytics</strong> - See sales and profit data</li>
+                      <li><strong>Recipes</strong> - Manage recipes and ingredients</li>
+                      <li><strong>Config</strong> - Set up pickup slots, flavors, locations</li>
+                      <li><strong>Settings</strong> - Business info, payments, this help section</li>
+                    </ul>
+                  </div>
+                )}
+              </div>
+
+              {/* Orders Tab */}
+              <div className="guide-section">
+                <button
+                  className="guide-header"
+                  onClick={() => setExpandedGuide(expandedGuide === 'orders' ? null : 'orders')}
+                >
+                  <span>Orders Tab</span>
+                  <span>{expandedGuide === 'orders' ? '−' : '+'}</span>
+                </button>
+                {expandedGuide === 'orders' && (
+                  <div className="guide-content">
+                    <p><strong>Purpose:</strong> View and manage all customer orders.</p>
+
+                    <h4>Order Statuses</h4>
+                    <ul>
+                      <li><strong>Submitted</strong> - New order, not yet on a prep sheet</li>
+                      <li><strong>Scheduled</strong> - Added to a prep sheet for baking</li>
+                      <li><strong>Baked</strong> - Prep sheet completed, loaves ready</li>
+                      <li><strong>Picked Up</strong> - Customer got their order</li>
+                      <li><strong>Canceled</strong> - Order was canceled</li>
+                      <li><strong>No Show</strong> - Customer didn't pick up</li>
+                    </ul>
+
+                    <h4>Common Tasks</h4>
+                    <ul>
+                      <li><strong>View order details:</strong> Click any order row</li>
+                      <li><strong>Filter orders:</strong> Use the dropdowns at the top</li>
+                      <li><strong>Edit an order:</strong> Click the order, then "Edit Order"</li>
+                      <li><strong>Export to CSV:</strong> Click the export button for spreadsheet</li>
+                    </ul>
+
+                    <h4>Notes</h4>
+                    <p>Payment status is shown here but edited in the Production tab (where you'll be when customers pick up).</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Prep Sheet Tab */}
+              <div className="guide-section">
+                <button
+                  className="guide-header"
+                  onClick={() => setExpandedGuide(expandedGuide === 'prep' ? null : 'prep')}
+                >
+                  <span>Prep Sheet Tab</span>
+                  <span>{expandedGuide === 'prep' ? '−' : '+'}</span>
+                </button>
+                {expandedGuide === 'prep' && (
+                  <div className="guide-content">
+                    <p><strong>Purpose:</strong> Plan what you're going to bake each day.</p>
+
+                    <h4>Workflow</h4>
+                    <ol>
+                      <li><strong>Create a prep sheet</strong> for your bake date</li>
+                      <li><strong>Add orders</strong> - Select which customer orders to include</li>
+                      <li><strong>Add extras</strong> - Plan additional loaves beyond orders (for walk-ins, gifts, etc.)</li>
+                      <li><strong>View the summary</strong> - See total loaves by flavor</li>
+                      <li><strong>Print or view ingredients</strong> - Get your shopping/prep list</li>
+                      <li><strong>Mark complete</strong> - When baking is done, this creates production records</li>
+                    </ol>
+
+                    <h4>Prep Sheet Statuses</h4>
+                    <ul>
+                      <li><strong>Draft</strong> - Still planning, can add/remove items</li>
+                      <li><strong>Completed</strong> - Baking done, loaves moved to Production tab</li>
+                    </ul>
+
+                    <h4>Tips</h4>
+                    <ul>
+                      <li>You can adjust actual quantities when marking complete (if you baked more or fewer than planned)</li>
+                      <li>Orders on a prep sheet show as "Scheduled" in the Orders tab</li>
+                      <li>When you complete a prep sheet, order statuses update to "Baked"</li>
+                    </ul>
+                  </div>
+                )}
+              </div>
+
+              {/* Production Tab */}
+              <div className="guide-section">
+                <button
+                  className="guide-header"
+                  onClick={() => setExpandedGuide(expandedGuide === 'production' ? null : 'production')}
+                >
+                  <span>Production Tab</span>
+                  <span>{expandedGuide === 'production' ? '−' : '+'}</span>
+                </button>
+                {expandedGuide === 'production' && (
+                  <div className="guide-content">
+                    <p><strong>Purpose:</strong> Track what happens to every loaf after it's baked.</p>
+
+                    <h4>Where Loaves Come From</h4>
+                    <p>When you complete a prep sheet, all the loaves appear here automatically.</p>
+
+                    <h4>Loaf Statuses</h4>
+                    <ul>
+                      <li><strong>Pending</strong> - Baked, waiting for pickup or sale</li>
+                      <li><strong>Picked Up</strong> - Customer got their pre-ordered loaves</li>
+                      <li><strong>Sold</strong> - Extra loaf sold to walk-in customer</li>
+                      <li><strong>Gifted</strong> - Given away (neighbor, thank-you, etc.)</li>
+                      <li><strong>Wasted</strong> - Had to throw away (burnt, dropped, etc.)</li>
+                      <li><strong>Personal</strong> - Kept for your family</li>
+                    </ul>
+
+                    <h4>Payment Tracking</h4>
+                    <p>For pre-orders, update payment status here when customers pick up:</p>
+                    <ul>
+                      <li>Click the payment dropdown on the order card</li>
+                      <li>Select the payment method they used</li>
+                      <li>This updates the order record automatically</li>
+                    </ul>
+
+                    <h4>Splitting Loaves</h4>
+                    <p>If you need to track different outcomes for the same batch:</p>
+                    <ul>
+                      <li>Click "Split" on any line item</li>
+                      <li>Example: 3 extra loaves → 2 sold + 1 gifted</li>
+                    </ul>
+
+                    <h4>Views</h4>
+                    <ul>
+                      <li><strong>Grouped by Order</strong> - See all loaves for each customer together</li>
+                      <li><strong>Flat View</strong> - See every loaf as a separate row</li>
+                    </ul>
+                  </div>
+                )}
+              </div>
+
+              {/* Analytics Tab */}
+              <div className="guide-section">
+                <button
+                  className="guide-header"
+                  onClick={() => setExpandedGuide(expandedGuide === 'analytics' ? null : 'analytics')}
+                >
+                  <span>Analytics Tab</span>
+                  <span>{expandedGuide === 'analytics' ? '−' : '+'}</span>
+                </button>
+                {expandedGuide === 'analytics' && (
+                  <div className="guide-content">
+                    <p><strong>Purpose:</strong> Understand your sales, costs, and profitability.</p>
+
+                    <h4>Key Reports</h4>
+                    <ul>
+                      <li><strong>Profit by Flavor</strong> - Which breads make the most money</li>
+                      <li><strong>Profit by Pickup Day</strong> - How each bake day performed</li>
+                      <li><strong>Profit per Hour</strong> - Your effective hourly wage</li>
+                      <li><strong>Sales Trends</strong> - Revenue over time</li>
+                    </ul>
+
+                    <h4>How Costs Are Calculated</h4>
+                    <p>Recipe cost = sum of all ingredient costs (based on your ingredient library)</p>
+                    <p>Total cost = recipe cost + overhead (packaging + utilities per loaf)</p>
+                    <p>Profit = selling price − total cost</p>
+
+                    <h4>Tips</h4>
+                    <ul>
+                      <li>Use the date range filter to see specific periods</li>
+                      <li>Keep your ingredient costs updated for accurate profit tracking</li>
+                      <li>Set your time estimates in Settings → Time & Labor for profit/hour</li>
+                    </ul>
+                  </div>
+                )}
+              </div>
+
+              {/* Recipes Tab */}
+              <div className="guide-section">
+                <button
+                  className="guide-header"
+                  onClick={() => setExpandedGuide(expandedGuide === 'recipes' ? null : 'recipes')}
+                >
+                  <span>Recipes Tab</span>
+                  <span>{expandedGuide === 'recipes' ? '−' : '+'}</span>
+                </button>
+                {expandedGuide === 'recipes' && (
+                  <div className="guide-content">
+                    <p><strong>Purpose:</strong> Manage your bread recipes and calculate costs.</p>
+
+                    <h4>Recipe Structure</h4>
+                    <ul>
+                      <li><strong>Base Ingredients</strong> - Main dough ingredients</li>
+                      <li><strong>Fold-ins</strong> - Add-ins mixed into the dough (cheese, herbs, etc.)</li>
+                      <li><strong>Lamination</strong> - Butter or fillings for layered breads</li>
+                      <li><strong>Steps</strong> - Your process instructions</li>
+                    </ul>
+
+                    <h4>Ingredient Library</h4>
+                    <p>Your ingredients are stored with their costs. When you add an ingredient to a recipe:</p>
+                    <ol>
+                      <li>Select from your library (or add new)</li>
+                      <li>Enter the quantity your recipe uses</li>
+                      <li>Choose the unit (grams, cups, etc.)</li>
+                      <li>Cost is calculated automatically</li>
+                    </ol>
+
+                    <h4>Unit Conversion Warning</h4>
+                    <p>If you see a ⚠️ warning on an ingredient cost, it means:</p>
+                    <ul>
+                      <li>The recipe uses a different unit type than how it's purchased</li>
+                      <li>Example: Recipe uses cups, but you buy it by weight</li>
+                      <li>Fix: Edit the ingredient and add "Weight per Volume" measurement</li>
+                    </ul>
+                  </div>
+                )}
+              </div>
+
+              {/* Config Tab */}
+              <div className="guide-section">
+                <button
+                  className="guide-header"
+                  onClick={() => setExpandedGuide(expandedGuide === 'config' ? null : 'config')}
+                >
+                  <span>Config Tab</span>
+                  <span>{expandedGuide === 'config' ? '−' : '+'}</span>
+                </button>
+                {expandedGuide === 'config' && (
+                  <div className="guide-content">
+                    <p><strong>Purpose:</strong> Set up the building blocks customers choose from.</p>
+
+                    <h4>Pickup Slots</h4>
+                    <p>These are the dates/times customers can pick up orders:</p>
+                    <ul>
+                      <li>Create a slot for each pickup day</li>
+                      <li>Set the location, date, and capacity</li>
+                      <li>Set cutoff hours (when ordering closes)</li>
+                      <li>Close slots when full or no longer available</li>
+                    </ul>
+
+                    <h4>Flavors</h4>
+                    <p>Your bread varieties that customers can order:</p>
+                    <ul>
+                      <li>Name, description, and price</li>
+                      <li>Link to a recipe for cost calculation</li>
+                      <li>Set as seasonal to hide from order form</li>
+                    </ul>
+
+                    <h4>Locations</h4>
+                    <p>Where customers pick up (farmers market, farm, etc.):</p>
+                    <ul>
+                      <li>Name and address</li>
+                      <li>Used when creating pickup slots</li>
+                    </ul>
+
+                    <h4>Ingredients</h4>
+                    <p>Your ingredient library with costs:</p>
+                    <ul>
+                      <li>Package price and size (what you pay)</li>
+                      <li>Cost per unit is calculated automatically</li>
+                      <li>Add "Weight per Volume" for accurate recipe costing</li>
+                    </ul>
+
+                    <h4>Overhead Costs</h4>
+                    <p>Per-loaf costs beyond ingredients:</p>
+                    <ul>
+                      <li>Packaging (bags, labels, etc.)</li>
+                      <li>Utilities (oven gas/electric, etc.)</li>
+                    </ul>
+                  </div>
+                )}
+              </div>
+
+              {/* Common Workflows */}
+              <div className="guide-section">
+                <button
+                  className="guide-header"
+                  onClick={() => setExpandedGuide(expandedGuide === 'workflows' ? null : 'workflows')}
+                >
+                  <span>Common Workflows</span>
+                  <span>{expandedGuide === 'workflows' ? '−' : '+'}</span>
+                </button>
+                {expandedGuide === 'workflows' && (
+                  <div className="guide-content">
+                    <h4>Weekly Bake Day Workflow</h4>
+                    <ol>
+                      <li><strong>Before bake day:</strong> Go to Prep Sheet, create sheet for your bake date</li>
+                      <li><strong>Add orders:</strong> Select all orders for that pickup day</li>
+                      <li><strong>Add extras:</strong> Plan extra loaves for walk-ins</li>
+                      <li><strong>Review:</strong> Check ingredient quantities, print if needed</li>
+                      <li><strong>Bake:</strong> Do your thing!</li>
+                      <li><strong>After baking:</strong> Mark prep sheet complete (adjust quantities if needed)</li>
+                      <li><strong>Pickup day:</strong> Go to Production tab</li>
+                      <li><strong>As customers arrive:</strong> Update payment status, mark loaves as picked up</li>
+                      <li><strong>End of day:</strong> Mark remaining extras as sold/gifted/personal</li>
+                    </ol>
+
+                    <h4>Setting Up a New Pickup Day</h4>
+                    <ol>
+                      <li>Go to Config → Pickup Slots</li>
+                      <li>Click "+ Add Slot"</li>
+                      <li>Select location, date, time</li>
+                      <li>Set capacity (max loaves)</li>
+                      <li>Set cutoff hours before pickup</li>
+                      <li>Save - it's now available on your order form!</li>
+                    </ol>
+
+                    <h4>Adding a New Bread Flavor</h4>
+                    <ol>
+                      <li>Go to Config → Flavors</li>
+                      <li>Click "+ Add Flavor"</li>
+                      <li>Enter name, description, price</li>
+                      <li>Save the flavor</li>
+                      <li>Go to Recipes tab</li>
+                      <li>Create recipe, link to the new flavor</li>
+                      <li>Add ingredients for cost tracking</li>
+                    </ol>
+
+                    <h4>When a Customer Cancels</h4>
+                    <ol>
+                      <li>Go to Orders tab</li>
+                      <li>Find and click the order</li>
+                      <li>Click "Edit Order"</li>
+                      <li>Change status to "Canceled"</li>
+                      <li>If already on prep sheet, remove it or adjust extras</li>
+                    </ol>
+                  </div>
+                )}
+              </div>
+
+              {/* Troubleshooting */}
+              <div className="guide-section">
+                <button
+                  className="guide-header"
+                  onClick={() => setExpandedGuide(expandedGuide === 'trouble' ? null : 'trouble')}
+                >
+                  <span>Troubleshooting</span>
+                  <span>{expandedGuide === 'trouble' ? '−' : '+'}</span>
+                </button>
+                {expandedGuide === 'trouble' && (
+                  <div className="guide-content">
+                    <h4>Recipe costs show ⚠️ warning</h4>
+                    <p><strong>Cause:</strong> Recipe uses volume (cups) but ingredient is priced by weight (grams), or vice versa.</p>
+                    <p><strong>Fix:</strong> Go to Config → Ingredients, edit the ingredient, add "Weight per Volume" (measure 1 tsp/tbsp/cup and weigh it).</p>
+
+                    <h4>Order form not showing new pickup slots</h4>
+                    <p><strong>Check:</strong></p>
+                    <ul>
+                      <li>Slot isn't marked as "Closed"</li>
+                      <li>Date hasn't passed</li>
+                      <li>Cutoff time hasn't passed</li>
+                      <li>Capacity isn't full</li>
+                    </ul>
+
+                    <h4>Can't edit payment on an order</h4>
+                    <p><strong>By design:</strong> Payment is edited in the Production tab, not Orders. This is because you'll typically update payment when customers pick up.</p>
+
+                    <h4>Profit numbers seem wrong</h4>
+                    <p><strong>Check:</strong></p>
+                    <ul>
+                      <li>Recipe ingredients have costs assigned</li>
+                      <li>No ⚠️ warnings on ingredient costs</li>
+                      <li>Overhead costs are set (Settings → Time & Labor)</li>
+                      <li>Flavor is linked to a recipe</li>
+                    </ul>
+
+                    <h4>Need more help?</h4>
+                    <p>Contact Sam for support. You can also use the "Send Error Report" button if something isn't working right.</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -1193,6 +1602,55 @@ function SettingsPage() {
           font-size: 0.75rem;
           font-weight: 600;
           text-transform: uppercase;
+        }
+        .guide-section {
+          border: 1px solid #e0e0e0;
+          border-radius: 8px;
+          margin-bottom: 8px;
+          overflow: hidden;
+        }
+        .guide-header {
+          width: 100%;
+          padding: 14px 16px;
+          background: #fafafa;
+          border: none;
+          cursor: pointer;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          font-size: 1rem;
+          font-weight: 500;
+          color: #333;
+          transition: background 0.2s;
+        }
+        .guide-header:hover {
+          background: #f0f0f0;
+        }
+        .guide-content {
+          padding: 16px;
+          background: white;
+          border-top: 1px solid #e0e0e0;
+          font-size: 0.9rem;
+          line-height: 1.6;
+        }
+        .guide-content h4 {
+          margin-top: 16px;
+          margin-bottom: 8px;
+          color: #8B7355;
+          font-size: 0.95rem;
+        }
+        .guide-content h4:first-child {
+          margin-top: 0;
+        }
+        .guide-content ul, .guide-content ol {
+          margin: 8px 0;
+          padding-left: 24px;
+        }
+        .guide-content li {
+          margin-bottom: 4px;
+        }
+        .guide-content p {
+          margin-bottom: 8px;
         }
       `}</style>
     </div>
