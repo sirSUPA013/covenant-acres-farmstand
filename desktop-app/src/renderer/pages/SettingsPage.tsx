@@ -1513,7 +1513,75 @@ function SettingsPage() {
                     </ul>
 
                     <h4>Need more help?</h4>
-                    <p>Contact Sam for support. You can also use the "Send Error Report" button if something isn't working right.</p>
+                    <p>Submit feedback or report issues through our feedback portal (see below), or contact Sam directly.</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Feedback & Support */}
+              <div className="guide-section">
+                <button
+                  className="guide-header"
+                  onClick={() => setExpandedGuide(expandedGuide === 'feedback' ? null : 'feedback')}
+                  style={{ backgroundColor: '#e3f2fd' }}
+                >
+                  <span>Feedback & Support</span>
+                  <span>{expandedGuide === 'feedback' ? '−' : '+'}</span>
+                </button>
+                {expandedGuide === 'feedback' && (
+                  <div className="guide-content">
+                    <p>We want to hear from you! Your feedback helps make this app better.</p>
+
+                    <h4>Submit Feedback</h4>
+                    <p>Use our feedback portal to:</p>
+                    <ul>
+                      <li><strong>Report bugs</strong> - Something not working right?</li>
+                      <li><strong>Request features</strong> - Have an idea for improvement?</li>
+                      <li><strong>Ask questions</strong> - Need clarification on anything?</li>
+                    </ul>
+
+                    <div style={{ margin: '16px 0', padding: '16px', backgroundColor: '#e8f5e9', borderRadius: '8px', textAlign: 'center' }}>
+                      <button
+                        onClick={() => window.api.openExternal('https://feedback.sjforge.dev/')}
+                        style={{
+                          backgroundColor: '#4caf50',
+                          color: 'white',
+                          border: 'none',
+                          padding: '12px 24px',
+                          borderRadius: '6px',
+                          fontSize: '1rem',
+                          cursor: 'pointer',
+                          fontWeight: 'bold'
+                        }}
+                      >
+                        Open Feedback Portal
+                      </button>
+                      <p style={{ marginTop: '8px', fontSize: '0.875rem', color: '#666' }}>
+                        Opens in your web browser
+                      </p>
+                    </div>
+
+                    <h4>How to Submit Good Feedback</h4>
+                    <p><strong>For bugs:</strong></p>
+                    <ul>
+                      <li>Describe what you were trying to do</li>
+                      <li>Describe what happened instead</li>
+                      <li>Include screenshots if possible</li>
+                      <li>Note any error messages you saw</li>
+                    </ul>
+
+                    <p style={{ marginTop: '12px' }}><strong>For feature requests:</strong></p>
+                    <ul>
+                      <li>Describe the problem you're trying to solve</li>
+                      <li>Explain how you currently work around it</li>
+                      <li>Describe your ideal solution</li>
+                    </ul>
+
+                    <h4>Response Time</h4>
+                    <p>Sam reviews feedback regularly. Urgent issues are prioritized, and you'll be notified when your feedback is addressed.</p>
+
+                    <h4>Other Ways to Reach Us</h4>
+                    <p>For urgent issues, you can also contact Sam directly. The feedback portal is preferred for tracking purposes.</p>
                   </div>
                 )}
               </div>
