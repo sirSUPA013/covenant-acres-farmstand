@@ -145,7 +145,7 @@
 
 ### Source Code
 ```
-ShaneStephanieBakery/
+CovenantAcresFarmstand/
 ├── desktop-app/src/
 │   ├── main/              # Electron main process
 │   │   ├── index.ts       # App entry point

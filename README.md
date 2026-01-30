@@ -36,7 +36,7 @@ Order management and production planning system for a micro bakery.
 
 ```bash
 # 1. Install dependencies
-cd ShaneStephanieBakery
+cd CovenantAcresFarmstand
 npm install
 cd desktop-app && npm install && npm rebuild better-sqlite3
 cd ../order-form && npm install
@@ -55,7 +55,7 @@ npm run dev
 ## Project Structure
 
 ```
-ShaneStephanieBakery/
+CovenantAcresFarmstand/
 ├── desktop-app/          # Electron admin app (Windows)
 ├── order-form/           # Web order form (Vercel)
 ├── demo/                 # Demo version with sample data

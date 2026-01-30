@@ -59,7 +59,7 @@
 ## Project Structure
 
 ```
-ShaneStephanieBakery/
+CovenantAcresFarmstand/
 │
 ├── desktop-app/                    # Electron desktop application
 │   ├── src/

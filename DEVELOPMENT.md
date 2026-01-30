@@ -30,7 +30,7 @@ This guide covers how to make changes to the Covenant Acres Farmstand system. Fo
 
 ```bash
 # Clone or navigate to project
-cd C:\Users\Sam\Claude\ShaneStephanieBakery
+cd C:\Users\Sam\Claude\CovenantAcresFarmstand
 
 # Install root dependencies
 npm install
