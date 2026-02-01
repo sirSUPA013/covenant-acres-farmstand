@@ -107,11 +107,21 @@ echo.
 echo  ------------------------------------------------------------
 echo.
 
-cd /d "!INSTALL_PATH!\desktop-app"
+cd /d "!INSTALL_PATH!"
 
 echo  Downloading update...
 echo.
-git pull origin master
+
+:: Set up temp directory
+set TEMP_DIR=%TEMP%\covenant-acres-update
+set ZIP_FILE=%TEMP%\covenant-acres-update.zip
+
+:: Clean up any previous failed attempts
+if exist "!TEMP_DIR!" rmdir /s /q "!TEMP_DIR!"
+if exist "!ZIP_FILE!" del "!ZIP_FILE!"
+
+:: Download the latest release zip from GitHub using PowerShell
+powershell -Command "& {[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri 'https://github.com/sjForge/covenant-acres-farmstand/archive/refs/tags/v1.1.0.zip' -OutFile '!ZIP_FILE!'}"
 if errorlevel 1 (
     echo.
     echo  [ERROR] Failed to download update.
@@ -121,8 +131,45 @@ if errorlevel 1 (
     pause
     exit /b 1
 )
+
+echo  Extracting files...
+echo.
+
+:: Extract the zip file using PowerShell
+powershell -Command "& {Expand-Archive -Path '!ZIP_FILE!' -DestinationPath '!TEMP_DIR!' -Force}"
+if errorlevel 1 (
+    echo.
+    echo  [ERROR] Failed to extract update files.
+    echo  Please contact Sam with a screenshot of this error.
+    echo.
+    pause
+    exit /b 1
+)
+
+:: Copy the desktop-app files to the installation
+:: The extracted folder will be named covenant-acres-farmstand-1.1.0 (tag name without v)
+echo  Copying updated files...
+echo.
+
+:: Copy desktop-app folder contents (preserving structure)
+xcopy "!TEMP_DIR!\covenant-acres-farmstand-1.1.0\desktop-app\*" "!INSTALL_PATH!\desktop-app\" /E /Y /Q
+if errorlevel 1 (
+    echo.
+    echo  [ERROR] Failed to copy update files.
+    echo  Please contact Sam with a screenshot of this error.
+    echo.
+    pause
+    exit /b 1
+)
+
+:: Clean up temp files
+del "!ZIP_FILE!" 2>nul
+rmdir /s /q "!TEMP_DIR!" 2>nul
+
 echo.
 echo  [OK] Update downloaded!
+
+cd /d "!INSTALL_PATH!\desktop-app"
 echo.
 
 echo  Installing dependencies (this may take a minute)...
