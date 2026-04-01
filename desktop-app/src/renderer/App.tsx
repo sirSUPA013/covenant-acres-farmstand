@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Routes, Route, NavLink, Navigate, useLocation } from 'react-router-dom';
+import { FeedbackWidget } from '@sjforge/feedback-widget';
+import { ElectronFeedbackAdapter } from './feedbackAdapter';
 
 // Components
 import LockScreen from './components/LockScreen';
@@ -72,6 +74,29 @@ function App() {
   function handleUnlock(user: AdminUser) {
     setCurrentUser(user);
     setIsLocked(false);
+
+    // Initialize feedback widget after unlock
+    if (!FeedbackWidget.isInitialized()) {
+      FeedbackWidget.init({
+        apiUrl: 'https://feedback.sjforge.dev/api/widget',
+        apiKey: 'fpk_6qUPutuqsT8Mv4zwhfFYF18yIZCCAwkC',
+        projectId: 'covenant-acres-farmstand',
+        adapter: ElectronFeedbackAdapter,
+        ui: {
+          showButton: false, // We'll trigger manually from Help section
+        },
+        features: {
+          recording: false, // Disable session recording for desktop app
+          screenshots: true,
+        },
+        customContext: {
+          app: 'CovenantAcresFarmstand',
+          version: '1.0.0',
+          userName: user.name,
+          userRole: user.role,
+        },
+      });
+    }
   }
 
   async function handleLogout() {

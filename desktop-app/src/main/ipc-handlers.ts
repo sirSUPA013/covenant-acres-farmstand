@@ -3,7 +3,7 @@
  * Handles communication between main and renderer processes
  */
 
-import { ipcMain, shell, app } from 'electron';
+import { ipcMain, shell, app, BrowserWindow } from 'electron';
 import crypto from 'crypto';
 import { getDb } from './database';
 import { syncAll, getSyncStatus, signIn, signOut, isAuthenticated, setConfig } from './sheets-sync';
@@ -2037,6 +2037,29 @@ export function setupIpcHandlers(): void {
 
   ipcMain.handle('system:openExternal', async (_event, url) => {
     await shell.openExternal(url);
+  });
+
+  // Feedback Widget
+  ipcMain.handle('feedback:captureScreenshot', async (event) => {
+    try {
+      const win = BrowserWindow.fromWebContents(event.sender);
+      if (!win) return null;
+
+      const image = await win.webContents.capturePage();
+      const dataUrl = `data:image/png;base64,${image.toPNG().toString('base64')}`;
+      return dataUrl;
+    } catch (error) {
+      log('error', 'Failed to capture screenshot', { error });
+      return null;
+    }
+  });
+
+  ipcMain.handle('feedback:getAppInfo', async () => {
+    return {
+      name: app.getName(),
+      version: app.getVersion(),
+      platform: process.platform,
+    };
   });
 
   // Extra Production

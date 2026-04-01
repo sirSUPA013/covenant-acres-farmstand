@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { FeedbackWidget } from '@sjforge/feedback-widget';
 
 interface Settings {
   businessName: string;
@@ -1542,7 +1543,7 @@ function SettingsPage() {
 
                     <div style={{ margin: '16px 0', padding: '16px', backgroundColor: '#e8f5e9', borderRadius: '8px', textAlign: 'center' }}>
                       <button
-                        onClick={() => window.api.openExternal('https://feedback.sjforge.dev/')}
+                        onClick={() => FeedbackWidget.open()}
                         style={{
                           backgroundColor: '#4caf50',
                           color: 'white',
@@ -1554,10 +1555,10 @@ function SettingsPage() {
                           fontWeight: 'bold'
                         }}
                       >
-                        Open Feedback Portal
+                        Submit Feedback
                       </button>
                       <p style={{ marginTop: '8px', fontSize: '0.875rem', color: '#666' }}>
-                        Opens in your web browser
+                        Report bugs, request features, or ask questions
                       </p>
                     </div>
 

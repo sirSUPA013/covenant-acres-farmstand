@@ -164,6 +164,10 @@ contextBridge.exposeInMainWorld('api', {
   getAppVersion: () => ipcRenderer.invoke('system:version'),
   openExternal: (url: string) => ipcRenderer.invoke('system:openExternal', url),
 
+  // Feedback Widget
+  captureScreenshot: () => ipcRenderer.invoke('feedback:captureScreenshot'),
+  getAppInfo: () => ipcRenderer.invoke('feedback:getAppInfo'),
+
   // Event listeners
   onSyncUpdate: (callback: (status: object) => void) => {
     const subscription = (_event: unknown, status: object) => callback(status);
@@ -390,6 +394,10 @@ declare global {
       sendErrorReport: () => Promise<void>;
       getAppVersion: () => Promise<string>;
       openExternal: (url: string) => Promise<void>;
+
+      // Feedback Widget
+      captureScreenshot: () => Promise<string | null>;
+      getAppInfo: () => Promise<{ name: string; version: string; platform: string }>;
 
       onSyncUpdate: (callback: (status: object) => void) => () => void;
       onNewOrder: (callback: (order: object) => void) => () => void;
